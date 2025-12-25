@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.idea   
+*/__pycache__
+oczyWatus/__pycache__
+# Virtual Environment
+.venv/
+.venv_win/
+.venv_linux/
+venv_linux/
+venv/
+env/
+
+# Environment Variables
+.env
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and Data
+*.log
+*.jsonl
+logs/
+
+# Models (large files)
+models/
+!models/.gitkeep
+
+# Temporary/Debug scripts
+debug_download.py
+temp/
+tmp/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.work
+
+# Models (extensions)
+*.pt
+*.onnx
+*.bin
+
+# Data directory
+data/

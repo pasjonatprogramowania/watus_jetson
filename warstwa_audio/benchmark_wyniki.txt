@@ -1,0 +1,41 @@
+================================================================================
+OLLAMA MODELS BENCHMARK - JETSON ORIN GPU
+Data: 2025-12-09 19:25
+================================================================================
+
+KONFIGURACJA:
+- GPU: NVIDIA Orin (nvgpu)
+- CUDA: 12.2
+- Prompt testowy: "Napisz krótką bajkę o kocie w 3 zdaniach."
+
+================================================================================
+WYNIKI BENCHMARKU
+================================================================================
+
+Model                    Tokeny    Czas (s)    Tokens/sec    Status
+--------------------------------------------------------------------------------
+gemma3:270m              113       2.50        45.21         ✅ SUKCES (najszybszy)
+gemma3:4b                114       10.70       10.66         ✅ SUKCES
+nemotron:latest          -         -           -             ❌ Timeout (>300s)
+qwen3:32b                -         -           -             ❌ Timeout (>300s)
+magistral:latest         -         -           -             ❌ Przerwany
+gpt-oss:20b              -         -           -             ❌ Nie testowany
+ServiceNow-AI/Apriel...  -         -           -             ❌ Nie testowany
+
+================================================================================
+PODSUMOWANIE
+================================================================================
+
+🏆 NAJSZYBSZY MODEL: gemma3:270m (45.21 tokens/sec)
+
+📊 STATYSTYKI:
+- Modele przetestowane pomyślnie: 2
+- Modele z timeoutem: 2
+- Modele nie testowane: 3
+
+💡 UWAGI:
+- Duże modele (>10GB) przekraczają timeout 300s na Jetson Orin
+- Prawdopodobnie nie mieszczą się w pamięci GPU i korzystają ze swap
+- Mniejsze modele (gemma3) działają w 100% na GPU
+
+================================================================================

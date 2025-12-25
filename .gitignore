@@ -1,0 +1,66 @@
+*.venv
+*venv
+*yolo12.pt
+lidar/.idea
+lidar/.venv
+lidar/.venv1
+lidar/.venv*
+lidar/venv
+lidar/venv*
+lidar/vis_v3_frames
+warstwa_audio/.idea
+warstwa_audio/.venv
+warstwa_audio/.venv*
+warstwa_audio/venv
+warstwa_audio/venv*
+warstwa_audio/oczyWatusa
+warstwa_llm/.idea
+warstwa_llm/.venv
+warstwa_llm/.venv*
+warstwa_llm/venv
+warstwa_llm/venv*
+warstwa_llm/chroma_db
+warstwa_llm/data
+warstwa_wizji/.idea
+warstwa_wizji/models
+*.env
+# --- Foldery systemowe i Pythonowe ---
+# Blokuje foldery cache w dowolnym miejscu w projekcie
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
+# --- Środowiska wirtualne (Virtual Environments) ---
+# Blokuje najczęstsze nazwy folderów środowisk
+.venv/
+venv/
+ENV/
+env/
+bin/
+lib/
+
+# --- Pliki konfiguracyjne i wrażliwe ---
+# Blokuje pliki .env w głównym folderze i wszystkich podfolderach
+**/.env
+**/*.env
+.secrets
+*.local
+
+# --- Specyficzne dla IDE (PyCharm, VS Code) ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Dystrybucja i budowanie ---
+dist/
+build/
+*.egg-info/
+nosetests.xml
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# --- Logi i bazy danych ---
+*.log
+*.sqlite

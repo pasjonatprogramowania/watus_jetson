@@ -1,0 +1,53 @@
+================================================================================
+OLLAMA BENCHMARK - JETSON ORIN GPU
+Data: 2025-12-10 10:32:02
+================================================================================
+
+KONFIGURACJA:
+- GPU: NVIDIA Orin (nvgpu) - 100% GPU utilization
+- CUDA: 12.2
+- RAM: 64GB (unified memory)
+- Power Mode: 30W (uwaga: MAXN wymaga restartu)
+- OLLAMA_FLASH_ATTENTION: włączony
+- Prompt testowy: "Napisz krótką bajkę o kocie w 3 zdaniach."
+
+================================================================================
+WYNIKI BENCHMARKU (posortowane wg tokens/sec)
+================================================================================
+
+Model                                              Tok/s   Tokeny  Gen Time  Load Time
+----------------------------------------------------------------------------------------
+🥇 gemma3:270m                                     50.00       58     1.2s       4.3s
+🥈 gemma3:4b                                       11.46      106     9.2s       0.4s
+🥉 gpt-oss:20b                                      8.25      352    42.7s     157.5s
+   ServiceNow-AI/Apriel-1.5-15b-Thinker:Q4_K_M      4.01      958   238.9s     191.0s
+   qwen3:32b                                        1.98      369   186.1s     230.0s
+   magistral:latest                                 1.77     1087   612.8s       9.9s
+   nemotron:latest                                     -        -        -   HTTP 500
+----------------------------------------------------------------------------------------
+
+================================================================================
+PODSUMOWANIE
+================================================================================
+
+🏆 NAJSZYBSZY MODEL: gemma3:270m (50.00 tokens/sec)
+
+📊 WSZYSTKIE MODELE PRZETESTOWANE NA 100% GPU (potwierdzone przez `ollama ps`)
+
+⚡ RANKING WYDAJNOŚCI:
+1. gemma3:270m     - 50.00 tok/s - NAJLEPSZY do szybkich odpowiedzi
+2. gemma3:4b       - 11.46 tok/s - dobry balans jakość/szybkość
+3. gpt-oss:20b     -  8.25 tok/s - dobra wydajność dla 20B modelu
+4. Apriel-15b      -  4.01 tok/s - solidna wydajność, dłuższe odpowiedzi
+5. qwen3:32b       -  1.98 tok/s - wolny ale największy (32B)
+6. magistral       -  1.77 tok/s - wolny, generuje bardzo długie odpowiedzi (1087 tok)
+
+❌ PROBLEMY:
+- nemotron:latest (42GB) - HTTP 500 (prawdopodobnie brak pamięci dla tak dużego modelu)
+
+💡 UWAGI:
+- magistral generuje bardzo długie odpowiedzi (1087 tokenów vs ~100-400 w innych)
+- Większe modele wymagają dłuższego czasu ładowania (do 230s dla qwen3:32b)
+- Dla szybkich interakcji zalecany: gemma3:270m lub gemma3:4b
+
+================================================================================
