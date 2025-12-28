@@ -1,66 +1,131 @@
-*.venv
-*venv
-*yolo12.pt
-lidar/.idea
-lidar/.venv
-lidar/.venv1
-lidar/.venv*
-lidar/venv
-lidar/venv*
-lidar/vis_v3_frames
-warstwa_audio/.idea
-warstwa_audio/.venv
-warstwa_audio/.venv*
-warstwa_audio/venv
-warstwa_audio/venv*
-warstwa_audio/oczyWatusa
-warstwa_llm/.idea
-warstwa_llm/.venv
-warstwa_llm/.venv*
-warstwa_llm/venv
-warstwa_llm/venv*
-warstwa_llm/chroma_db
-warstwa_llm/data
-warstwa_wizji/.idea
-warstwa_wizji/models
-*.env
-# --- Foldery systemowe i Pythonowe ---
-# Blokuje foldery cache w dowolnym miejscu w projekcie
-**/__pycache__/
-**/*.py[cod]
-**/*$py.class
+# --- Systemowe (OS) ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+[Tt]humbs.db
+*.stackdump
 
-# --- Środowiska wirtualne (Virtual Environments) ---
-# Blokuje najczęstsze nazwy folderów środowisk
-.venv/
-venv/
-ENV/
-env/
-bin/
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
 lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# --- Pliki konfiguracyjne i wrażliwe ---
-# Blokuje pliki .env w głównym folderze i wszystkich podfolderach
-**/.env
-**/*.env
-.secrets
-*.local
+# --- Wirtualne Środowiska (Virtual Environments) ---
+# Blokuje standardowe nazwy venv wszędzie w projekcie
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
 
-# --- Specyficzne dla IDE (PyCharm, VS Code) ---
+# --- IDE i Edytory ---
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
+.settings/
 
-# --- Dystrybucja i budowanie ---
-dist/
-build/
-*.egg-info/
+# --- Konfiguracja i Sekrety ---
+.env
+.env.*
+!.env.example
+.secrets
+*.local
+secrets.json
+
+# --- Logi i Debugowanie ---
+*.log
+logs/
+**/logs/
+**/out/
+**/output/
+*.spec
 nosetests.xml
 coverage.xml
 htmlcov/
 .pytest_cache/
+.mypy_cache/
 
-# --- Logi i bazy danych ---
-*.log
+# --- Modele AI i Duże Pliki (Jetson/YOLO/LLM) ---
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.bin
+*.weights
+*.bin
+*.weights
+# Wykluczamy foldery modeli w dowolnym miejscu (root, warstwa_audio, warstwa_wizji)
+**/models/
+**/runs/
+**/ft-yolo-models/
+# Wyjątek: jeśli chcesz jednak trackować konkretny model, ścieżka musi być z !
+# !warstwa_wizji/models/yolo12s.pt
+
+# --- Pliki Danych i Wyjściowe ---
+# Ogólne pliki danych, które mogą być duże lub generowane
 *.sqlite
+*.db
+*.csv
+*.csv
+*.jsonl
+consolidator/consolidator.json
+consolidator/consolidator.jsonl
+*_output.json
+
+# Folder data - ignorujemy przetworzone, ale (opcjonalnie) zostawiamy strukturę
+data/processed/
+data/temp/
+
+# Specyficzne dla modułów (z oryginalnego pliku)
+warstwa_audio/oczyWatusa
+warstwa_llm/chroma_db
+warstwa_llm/data
+lidar/vis_v3_frames
+lidar/data/
+
+# --- Media (Wideo, Obrazy, GIF) ---
+# Generowane przez system wizyjny lub lidar
+*.mp4
+*.avi
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.gif
+# Wyjątek dla assetów (jeśli takie będą)
+!assets/*.png
+!assets/*.jpg
+
+# --- Specyficzne wykluczenia (Legacy / Cleanup) ---
+# Stare nazwy venvów, które mogą gdzieś wisieć
+lidar/.venv*
+warstwa_audio/.venv*
+warstwa_llm/.venv*
+warstwa_wizji/models/

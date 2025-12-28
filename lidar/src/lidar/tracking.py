@@ -224,6 +224,23 @@ class HumanTracker:
     # --- pomocnicze ---
 
     def _create_track(self, t: float, x: float, y: float) -> HumanTrack:
+        """
+        Tworzy nową instancję śledzonego obiektu (HumanTrack).
+        
+        Inicjalizuje historię pozycji, czas ostatniej aktualizacji oraz liczniki jakości śledzenia.
+        Nowy track jest początkowo niepotwierdzony (confirmed=False).
+        
+        Argumenty:
+            t (float): Czas utworzenia (timestamp).
+            x (float): Pozycja początkowa X.
+            y (float): Pozycja początkowa Y.
+            
+        Zwraca:
+            HumanTrack: Nowy obiekt tracka.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._create_track()
+        """
         # tworzy nowy, jeszcze niepotwierdzony track
         t = float(t)
         xf = float(x)
@@ -246,6 +263,23 @@ class HumanTracker:
         return track
 
     def _find_best_match(self, x: float, y: float, t: float) -> Optional[HumanTrack]:
+        """
+        Znajduje najlepiej pasujący aktywny track do zadanego punktu pomiarowego.
+        
+        Wykorzystuje predykcję pozycji tracków na czas 't' i oblicza odległość euklidesową.
+        Zwraca track o najmniejszym dystansie, jeśli jest mniejszy niż max_match_distance.
+        
+        Argumenty:
+            x (float): Współrzędna X punktu pomiarowego.
+            y (float): Współrzędna Y punktu pomiarowego.
+            t (float): Czas pomiaru.
+            
+        Zwraca:
+            Optional[HumanTrack]: Znaleziony track lub None.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._find_best_match()
+        """
         # zwraca najbliższy track względem predykowanej pozycji
         xf = float(x)
         yf = float(y)
@@ -268,6 +302,19 @@ class HumanTracker:
         return best_track
 
     def _is_in_motion_zone(self, x: float, y: float) -> bool:
+        """
+        Sprawdza, czy punkt znajduje się w zdefiniowanej strefie ruchu.
+        
+        Argumenty:
+            x (float): Współrzędna X.
+            y (float): Współrzędna Y.
+            
+        Zwraca:
+            bool: True jeśli punkt jest w zasięgu promienia strefy ruchu.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker (różne metody) -> HumanTracker._is_in_motion_zone()
+        """
         """Zwraca True, jeśli (x,y) leży w strefie ruchu (prosty okrąg)."""
         return float(np.hypot(x, y)) <= self.motion_zone_radius
 
@@ -278,6 +325,21 @@ class HumanTracker:
         meas_x: float,
         meas_y: float,
     ) -> None:
+        """
+        Aktualizuje stan (pozycję, prędkość/filtr Kalmana uproszczony) wybranego tracka.
+        
+        Stosuje filtr alfa-beta do wygładzania pozycji i prędkości. 
+        Zarządza logiką potwierdzania tracka (hits_count).
+        
+        Argumenty:
+            track (HumanTrack): Track do zaktualizowania.
+            t (float): Czas aktualizacji.
+            meas_x (float): Zmierzona pozycja X.
+            meas_y (float): Zmierzona pozycja Y.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._update_track_state()
+        """
         # aktualizacja pozycji i prędkości tracka
         t = float(t)
         mx = float(meas_x)
@@ -319,10 +381,30 @@ class HumanTracker:
             track.confirmed = True
 
     def _archive_track(self, track: HumanTrack) -> None:
+        """
+        Przenosi track do archiwum zamiast go usuwać.
+        
+        Umożliwia późniejszą re-identyfikację, jeśli obiekt pojawi się ponownie.
+        
+        Argumenty:
+            track (HumanTrack): Track do zarchiwizowania.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._archive_track()
+        """
         # przenosi track do archiwum zamiast całkowitego usunięcia
         self.archived_tracks.append(track)
 
     def _prune_archive(self, t: float) -> None:
+        """
+        Usuwa z archiwum tracki, które przekroczyły maksymalny czas życia w archiwum.
+        
+        Argumenty:
+            t (float): Aktualny czas.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._prune_archive()
+        """
         # usuwa z archiwum tracki, które są za stare
         t = float(t)
         fresh: List[HumanTrack] = []
@@ -338,6 +420,22 @@ class HumanTracker:
             y: float,
             t: float,
     ) -> Optional[HumanTrack]:
+        """
+        Próbuje dopasować punkt pomiarowy do tracków znajdujących się w archiwum (Re-ID).
+        
+        Sprawdza zarówno pozycję predykowaną jak i ostatnią znaną pozycję.
+        
+        Argumenty:
+            x (float): Zmierzona pozycja X.
+            y (float): Zmierzona pozycja Y.
+            t (float): Czas pomiaru.
+            
+        Zwraca:
+            Optional[HumanTrack]: Dopasowany archiwalny track lub None.
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.update() -> HumanTracker._find_best_archived_match()
+        """
         xf = float(x)
         yf = float(y)
         t = float(t)
@@ -446,6 +544,22 @@ class HumanTracker:
         horizon_s: float = TRACK_PREDICTION_HORIZON_S,
         step_s: float = TRACK_PREDICTION_STEP_S,
     ) -> Dict[int, List[Tuple[float, float, float]]]:
+        """
+        Zwraca przewidywane trajektorie dla wszystkich aktywnych tracków.
+        
+        Dla każdego aktywnego tracka generuje listę punktów w przyszłości (czas, x, y).
+        
+        Argumenty:
+            t_now (float): Aktualny czas.
+            horizon_s (float): Horyzont czasowy predykcji.
+            step_s (float): Krok czasowy predykcji.
+            
+        Zwraca:
+            Dict[int, List[Tuple]]: Słownik {id_tracka: lista_punktów_trajektorii}.
+            
+        Hierarchia wywołań:
+            run_vis.py -> main() -> AiwataLidarSystem.get_prediction_data() -> HumanTracker.get_future_predictions()
+        """
         # zwraca przewidywane trajektorie (t,x,y) dla aktywnych tracków
         t_now = float(t_now)
         preds: Dict[int, List[Tuple[float, float, float]]] = {}

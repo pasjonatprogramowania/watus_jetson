@@ -17,6 +17,9 @@
 8. [Konfiguracja](#konfiguracja)
 9. [Uruchamianie Systemu](#uruchamianie-systemu)
 10. [Rozwiązywanie Problemów](#rozwiązywanie-problemów)
+11. [Diagramy Przepływu Danych](#diagramy-przepływu-danych)
+12. [Topologia Komunikacji](#topologia-komunikacji)
+13. [Podsumowanie](#podsumowanie)
 
 ---
 
@@ -36,7 +39,7 @@ Watus_jetson to zaawansowany, wielomodułowy system sztucznej inteligencji zapro
 
 Projekt watus_jetson został stworzony z myślą o zastosowaniach robotycznych, gdzie niezbędna jest szybka i precyzyjna interpretacja otoczenia. System potrafi w czasie rzeczywistym analizować obraz z kamer, rozpoznawać obiekty i ich lokalizację, przetwarzać komendy głosowe użytkownika, identyfikować mówcę na podstawie charakterystyki głosu oraz generować naturalne odpowiedzi syntetycznej mowy. Dane ze wszystkich źródeł sensorycznych są agregowane przez moduł consolidator, który synchronizuje je czasowo i przekazuje do warstwy LLM odpowiedzialnej za podejmowanie decyzji oraz generowanie kontekstowych odpowiedzi.
 
-Głównym założeniem projektowym jest modularność i niezależność poszczególnych warstw. Każdy komponent działa jako samodzielny proces, komunikujący się z pozostałymi poprzez zdefiniowane interfejsy komunikacyjne. Takie podejście umożliwia niezależne testowanie, debugowanie oraz rozwijanie poszczególnych części systemu bez konieczności modyfikacji pozostałych modułów. Dodatkowo, architektura pozwala na elastyczne dostosowywanie konfiguracji sprzętowej — poszczególne warstwy mogą być uruchamiane na różnych urządzeniach w sieci, tworząc rozproszony system przetwarzania.
+Głównym założeniem projektowym jest modularność i niezależność poszczególnych warstw. Każdy komponent działa jako samodzielny proces, komunikując się z pozostałymi poprzez zdefiniowane interfejsy komunikacyjne. Takie podejście umożliwia niezależne testowanie, debugowanie oraz rozwijanie poszczególnych części systemu bez konieczności modyfikacji pozostałych modułów. Dodatkowo, architektura pozwala na elastyczne dostosowywanie konfiguracji sprzętowej — poszczególne warstwy mogą być uruchamiane na różnych urządzeniach w sieci, tworząc rozproszony system przetwarzania.
 
 ---
 
@@ -400,10 +403,10 @@ Warstwa LLM watus_jetson wspiera integrację z wieloma dostawcami modeli języko
 
 | Dostawca         | Modele                             | Wymagania      |
 | ---------------- | ---------------------------------- | -------------- |
-| Google Gemini    | gemini-1.5-flash, gemini-1.5-pro   | Klucz API      |
-| OpenAI           | gpt-4o, gpt-4-turbo, gpt-3.5-turbo | Klucz API      |
-| Anthropic        | claude-3-5-sonnet, claude-3-haiku  | Klucz API      |
-| Ollama (lokalny) | llama3, mistral, codellama         | Lokalny serwer |
+| Google Gemini    | gemini-2.5-flash, gemini-2.5-pro   | Klucz API      |
+| OpenAI           | gpt-5, gpt-5.2                     | Klucz API      |
+| Anthropic        | claude-3.5-sonet                   | Klucz API      |
+| Ollama (lokalny) | llama3, mistral, qwen, gpt-oss-20b | Lokalny serwer |
 
 Konfiguracja kluczy API odbywa się poprzez plik `.env`, który zostanie omówiony w sekcji dotyczącej konfiguracji systemu.
 
@@ -741,11 +744,126 @@ async def process_question(request: ProcessQuestionRequest):
 
 Mechanizm RAG pozwala na wzbogacenie odpowiedzi modelu językowego o kontekst zewnętrznej wiedzy, znacznie poprawiając jakość i trafność generowanych odpowiedzi. W systemie watus_jetson RAG wykorzystuje bazę wektorową ChromaDB do przechowywania i wyszukiwania podobnych konwersacji oraz dokumentów kontekstowych.
 
-**Przepływ RAG:**
+##### Diagram Przepływu RAG
 
-1. **Indeksowanie:** Nowe interakcje użytkownika są przekształcane w embedding'i i zapisywane w bazie wektorowej wraz z metadanymi (kategoria, znacznik czasowy, identyfikator rozmowy).
-2. **Wyszukiwanie:** Przy nowym zapytaniu, system generuje embedding dla pytania i wyszukuje najbardziej podobne dokumenty w bazie wektorowej przy użyciu wyszukiwania najbliższych sąsiadów (approximate nearest neighbors).
-3. **Kontekstualizacja:** Znalezione dokumenty są formatowane jako kontekst dla prompt'a LLM, umożliwiając modelowi wykorzystanie wiedzy z poprzednich rozmów.
+Poniższy diagram przedstawia szczegółowy przepływ danych w mechanizmie RAG, który pozwala systemowi na wykorzystanie wcześniejszych konwersacji i kontekstu zewnętrznego przy generowaniu odpowiedzi:
+
+```mermaid
+sequenceDiagram
+    participant User as Użytkownik
+    participant Orch as Orchestrator (FastAPI)
+    participant Emb as Model Embeddingowy
+    participant DB as ChromaDB
+    participant Prompt as Prompt Builder
+    participant LLM as Model Językowy
+    participant TTS as Piper TTS
+
+    Note over User, TTS: Faza 1: Indeksowanie (gdy brak pasującego kontekstu)
+
+    User->>Orch: Zapytanie: "Co widzisz?"
+    Orch->>Emb: Generuj embedding(zapytanie)
+    Emb-->>Orch: Vector: [0.23, -0.45, ...]
+
+    Orch->>DB: similarity_search(vector, k=5)
+    DB-->>Orch: Powiązane dokumenty z metadanymi
+
+    Note over Orch: Faza 2: Brak kontekstu - indeksowanie nowej rozmowy
+
+    DB-->>Orch: Brak pasujących wyników (pusta kolekcja)
+    Orch->>DB: add_document(zapytanie, odpowiedź, metadata)
+
+    Note over User, TTS: Faza 3: Generowanie odpowiedzi z kontekstem
+
+    Orch->>Prompt: BuildPrompt(system_prompt, konteksty, zapytanie)
+    Prompt-->>Orch: Kompletny prompt
+
+    Orch->>LLM: Generate(prompt)
+    LLM-->>Orch: Token 1...Token N (stream)
+    Orch-->>User: Odpowiedź tekstowa
+
+    Note over User, TTS: Faza 4: Synteza mowy (opcjonalnie)
+
+    User->>Orch: Proszę o odpowiedź głosową
+    Orch->>TTS: Synthesize(odpowiedź_tekstowa)
+    TTS-->>User: Audio (WAV/MP3)
+
+    Note over Orch, DB: Faza 5: Aktualizacja bazy wiedzy
+
+    Orch->>DB: add(documents, embeddings, metadata)
+    Note right of DB: metadata: {category: "vision", timestamp: "...", ...}
+    DB-->>Orch: IDs: ["doc_123", "doc_124"]
+
+    Note over User, TTS: Następne zapytanie będzie miało dostęp do tego kontekstu
+```
+
+##### Diagram Schematu Bazy Danych ChromaDB
+
+Poniższy diagram przedstawia strukturę danych w bazie wektorowej ChromaDB wykorzystywanej przez system watus_jetson do przechowywania kontekstu konwersacji:
+
+```mermaid
+classDiagram
+    direction TB
+  
+    class Client:::client {
+        +get_collection(name)
+        +get_or_create_collection(name)
+        +delete_collection(name)
+        +reset()
+    }
+
+    class Collection:::collection {
+        +string name
+        +string id
+        +Metadata metadata
+        +count()
+        +add(documents, embeddings, metadatas, ids)
+        +query(query_embeddings, n_results)
+        +get(ids, where)
+        +delete(ids)
+        +modify(name)
+    }
+
+    class Document:::document {
+        +string id
+        +string content
+        +List[float] embedding
+        +Metadata metadata
+    }
+
+    class Metadata:::metadata {
+        +string category
+        +datetime timestamp
+        +string speaker_id
+        +string conversation_id
+    }
+
+    class EmbeddingModel:::model {
+        +string provider
+        +string model_name
+        +encode(text)
+    }
+
+    class QueryResult:::result {
+        +List[string] ids
+        +List[List[float]] embeddings
+        +List[string] documents
+        +List[Metadata] metadatas
+        +List[float] distances
+    }
+
+    Client "1" --> "*" Collection : zarządza
+    Collection "1" --> "*" Document : zawiera
+    Document "1" --> "1" Metadata : posiada
+    Document "*" --> "1" EmbeddingModel : embedowany przez
+    Collection ..> QueryResult : zwraca wyniki
+
+    classDef client fill:#f3e5f5,stroke:#4a148c,stroke-width:2px;
+    classDef collection fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    classDef document fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef metadata fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef model fill:#f3e5f5,stroke:#880e4f,stroke-width:2px;
+    classDef result fill:#ffebee,stroke:#c62828,stroke-width:2px;
+```
 
 **Konfiguracja ChromaDB:**
 
@@ -1588,10 +1706,708 @@ def call_llm_api(prompt):
 
 ---
 
-## Podsumowanie
+## Diagramy Przepływu Danych
 
-System watus_jetson stanowi zaawansowaną platformę do budowy wielomodułowych aplikacji robotycznych wykorzystujących sztuczną inteligencję. Modularna architektura oparta na komunikacji ZMQ umożliwia elastyczne skalowanie i dostosowywanie systemu do różnych scenariuszy zastosowań. Dokumentacja niniejsza stanowi kompleksowy przewodnik instalacyjny i referencyjny dla deweloperów pracujących z kodem źródłowym projektu.
+W tej sekcji przedstawiono szczegółowe diagramy przepływu danych dla poszczególnych komponentów systemu, które wizualnie ilustrują procesy przetwarzania informacji w module watus_jetson.
 
+### Diagram Przepływu Danych Warstwy Wizji
+
+Poniższy diagram przedstawia szczegółowy przepływ danych w warstwie wizji od momentu przechwycenia obrazu z kamery do publikacji wyników detekcji na szynie ZMQ:
+
+```mermaid
+graph LR
+    subgraph Sprzęt["Warstwa Sprzętowa"]
+        KameraCSI["Kamera CSI/USB"]
+        Strumień["Strumień Video"]
+    end
+
+    subgraph Przechwytywanie["1. Przechwytywanie"]
+        OpenCV["OpenCV Capture"]
+        BuforKlatek["Bufor Klatek"]
+        KonwersjaBGR["Konwersja BGR → RGB"]
+    end
+
+    subgraph Przetwarzanie["2. Preprocessing"]
+        Resize["Resize (640×640)"]
+        Normalizacja["Normalizacja [0,1]"]
+        HWC2CHW["HWC → CHW"]
+        Tensor["Tensor (NCHW)"]
+    end
+
+    subgraph Inferencja["3. Inferencja Modelu"]
+        GPU["GPU CUDA"]
+        Backbone["Backbone (CSPNet)"]
+        Neck["Neck (PANet)"]
+        Head["Detection Head"]
+        TensorOut["Tensor Wyjściowy"]
+    end
+
+    subgraph Postprocessing["4. Postprocessing"]
+        NMS["Non-Maximum Suppression"]
+        Filtrowanie["Filtrowanie progu"]
+        Scaling["Scaling BBox"]
+        Klasy["Mapowanie Klas (COCO)"]
+    end
+
+    subgraph Wyjście["5. Publikacja"]
+        JSON["Serializacja JSON"]
+        PublikacjaZMQ["ZMQ PUB (port 5555)"]
+        PlikJSONL["Zapis do camera.jsonl"]
+    end
+
+    KameraCSI --> Strumień
+    Strumień --> OpenCV
+    OpenCV --> BuforKlatek
+    BuforKlatek --> KonwersjaBGR
+    KonwersjaBGR --> Resize
+    Resize --> Normalizacja
+    Normalizacja --> HWC2CHW
+    HWC2CHW --> Tensor
+    Tensor --> GPU
+    GPU --> Backbone
+    Backbone --> Neck
+    Neck --> Head
+    Head --> TensorOut
+    TensorOut --> NMS
+    NMS --> Filtrowanie
+    Filtrowanie --> Scaling
+    Scaling --> Klasy
+    Klasy --> JSON
+    JSON --> PublikacjaZMQ
+    JSON --> PlikJSONL
+
+    classDef hardware fill:#e1f5fe,stroke:#01579b
+    classDef process fill:#f3e5f5,stroke:#4a148c
+    classDef model fill:#e8f5e9,stroke:#1b5e20
+    classDef output fill:#fff3e0,stroke:#e65100
+
+    class KameraCSI,Strumień hardware
+    class OpenCV,BuforKlatek,KonwersjaBGR,Resize,Normalizacja,HWC2CHW process
+    class GPU,Backbone,Neck,Head,Tensor,TensorOut model
+    class JSON,PublikacjaZMQ,PlikJSONL output
+```
+
+### Diagram Przepływu Danych Warstwy LiDAR
+
+Poniższy diagram przedstawia przepływ danych w module LiDAR od surowych pomiarów odległości do semantycznego opisu przeszkód i publikacji wyników:
+
+```mermaid
+graph LR
+    subgraph Sprzęt["Źródło Danych"]
+        LiDAR["Czujnik LiDAR"]
+        Protokół["UDP/TCP"]
+    end
+
+    subgraph Surowe["Przetwarzanie Surowych Danych"]
+        Odbiór["Odbiór Pakietów"]
+        Dekodowanie["Dekodowanie Scan Data"]
+        ChmuraPkt["Chmura Punktów (X,Y,Z,I)"]
+    end
+
+    subgraph Filtracja["Filtracja i Przetwarzanie"]
+        StatFilt["Filtracja Statystyczna"]
+        VoxelGrid["Voxel Grid Filter"]
+        ROI["Crop ROI"]
+        UsuwaniePodłogi["RANSAC - Podłoga"]
+    end
+
+    subgraph Analiza["Analiza i Segmentacja"]
+        Euclidean["Euclidean Clustering"]
+        Segmenty["Segmenty Obiektów"]
+        AABB["Bounding Box (AABB)"]
+        Cechy["Ekstrakcja Cech"]
+    end
+
+    subgraph Semantyka["Semantyka"]
+        Klasyfikacja["Klasyfikacja Obiektów"]
+        Tracking["Multi-Object Tracking"]
+        Pozycja["Pozycja 3D"]
+        Wymiary["Wymiary"]
+    end
+
+    subgraph Wyjście["Publikacja"]
+        JSON["Serializacja JSON"]
+        ZMQ["ZMQ PUB (port 5557)"]
+    end
+
+    LiDAR --> Protokół
+    Protokół --> Odbiór
+    Odbiór --> Dekodowanie
+    Dekodowanie --> ChmuraPkt
+    ChmuraPkt --> StatFilt
+    StatFilt --> VoxelGrid
+    VoxelGrid --> ROI
+    ROI --> UsuwaniePodłogi
+    UsuwaniePodłogi --> Euclidean
+    Euclidean --> Segmenty
+    Segmenty --> AABB
+    AABB --> Cechy
+    Cechy --> Klasyfikacja
+    Klasyfikacja --> Tracking
+    Tracking --> Pozycja
+    Pozycja --> Wymiary
+    Wymiary --> JSON
+    JSON --> ZMQ
+
+    classDef hardware fill:#e1f5fe,stroke:#01579b
+    classDef processing fill:#f3e5f5,stroke:#4a148c
+    classDef analysis fill:#e8f5e9,stroke:#1b5e20
+    classDef semantic fill:#fff3e0,stroke:#e65100
+
+    class LiDAR,Protokół hardware
+    class Odbiór,Dekodowanie,ChmuraPkt,StatFilt,VoxelGrid,ROI,UsuwaniePodłogi processing
+    class Euclidean,Segmenty,AABB,Cechy analysis
+    class Klasyfikacja,Tracking,Pozycja,Wymiary semantic
+    class JSON,ZMQ output
+```
+
+### Diagram Stanów Modułu VAD (Voice Activity Detection)
+
+Poniższy diagram stanów przedstawia automat stanów dla modułu wykrywania aktywności głosowej, który określa, kiedy użytkownik mówi i kiedy należy aktywować proces transkrypcji:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inicjalizacja
+
+    state Inicjalizacja {
+        [*] --> ŁadowanieKonfiguracji
+        ŁadowanieKonfiguracji --> InicjalizacjaUrządzeniaAudio
+        InicjalizacjaUrządzeniaAudio --> KalibracjaPoziomuSzumu
+        KalibracjaPoziomuSzumu --> [*]
+    }
+
+    Inicjalizacja --> Nasłuch
+
+    state Nasłuch {
+        [*] --> Buforowanie
+        Buforowanie --> AnalizaAmplitudy
+        AnalizaAmplitudy --> SprawdzenieProgu
+    }
+
+    Nasłuch --> WykrytoMowe: Amplituda > Próg (threshold)
+    WykrytoMowe --> Nagrywanie
+
+    state Nagrywanie {
+        [*] --> AkumulacjaAudio
+        AkumulacjaAudio --> MonitorowanieSygnalu
+        MonitorowanieSygnalu --> SprawdzenieCiszy
+    }
+
+    Nagrywanie --> WykrytoMowe: Sygnał > Próg (podczas nagrywania)
+    Nagrywanie --> OczekiwanieNaCisze: Sygnał < Próg
+
+    state OczekiwanieNaCisze {
+        [*] --> TimerCiszy
+        TimerCiszy --> CzyCzasMinął
+        CzyCzasMinął --> TimerCiszy: Czas nie minął
+    }
+
+    OczekiwanieNaCisze --> Przetwarzanie: Timer minął (min_silence_duration_ms)
+    OczekiwanieNaCisze --> WykrytoMowe: Sygnał > Próg (przerwanie ciszy)
+
+    state Przetwarzanie {
+        [*] --> WeryfikacjaSegmentu
+        WeryfikacjaSegmentu --> WysłanieDoSTT
+        WysłanieDoSTT --> OczekiwanieNaTranskrypcję
+        OczekiwanieNaTranskrypcję --> [*]
+    }
+
+    Przetwarzanie --> Nasłuch
+
+    state Blad {
+        [*] --> LogowanieBłędu
+        LogowanieBłędu --> PróbaReinicjalizacji
+        PróbaReinicjalizacja --> Nasłuch: Sukces
+        PróbaReinicjalizacja --> Zatrzymanie: Wielokrotne błędy
+    }
+
+    Nasłuch --> Blad: Wyjątek urządzenia
+    Nagrywanie --> Blad: Błąd bufora
+    Przetwarzanie --> Blad: Błąd STT
+
+    Zatrzymanie --> [*]
+
+    classDef active fill:#e8f5e9,stroke:#2e7d32
+    classDef waiting fill:#fff3e0,stroke:#e65100
+    classDef processing fill:#e3f2fd,stroke:#1565c0
+    classDef error fill:#ffebee,stroke:#c62828
+
+    class Nasłuch,Nagrywanie active
+    class OczekiwanieNaCisze waiting
+    class Inicjalizacja,Przetwarzanie processing
+    class Blad,Zatrzymanie error
+```
+
+
+### Diagram Cyklu Życia Komponentu
+
+Poniższy diagram stanów przedstawia typowy cykl życia każdego komponentu systemu watus_jetson, od momentu inicjalizacji do zatrzymania:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inicjalizacja
+
+    state Inicjalizacja {
+        [*] --> ŁadowanieKonfiguracji
+        ŁadowanieKonfiguracji --> WeryfikacjaZależności
+        WeryfikacjaZależności --> InicjalizacjaZMQ
+        InicjalizacjaZMQ --> ŁadowanieModeliAI
+        ŁadowanieModeliAI --> InicjalizacjaSprzętu
+        InicjalizacjaSprzętu --> [*]
+    }
+
+    Inicjalizacja --> StanBytu
+
+    state StanBytu {
+        [*] --> OczekiwanieNaDane
+        OczekiwanieNaDane --> Przetwarzanie: Dane dostępne
+        Przetwarzanie --> PublikacjaWyników
+        PublikacjaWyników --> OczekiwanieNaDane
+    }
+
+    StanBytu --> Zatrzymanie: Komenda zatrzymania
+    StanBytu --> BłądKrytyczny: Wyjątek krytyczny
+
+    state BłądKrytyczny {
+        [*] --> LogowanieBłędu
+        LogowanieBłędu --> PowiadomienieNadzorcy
+        PowiadomienieNadzorcy --> PróbaReakcji
+    }
+
+    BłądKrytyczny --> StanBytu: Błąd naprawiony
+    BłądKrytyczny --> Zatrzymanie: Wielokrotne błędy
+
+    state Zatrzymanie {
+        [*] --> ZatrzymaniePętli
+        ZatrzymaniePętli --> ZamykaniePołączeń
+        ZamykaniePołączeń --> ZwalnianiePamięci
+        ZwalnianiePamięci --> ZamykaniePlikuLogów
+        ZamykaniePlikuLogów --> [*]
+    }
+
+    classDef init fill:#e3f2fd,stroke:#1565c0
+    classDef active fill:#e8f5e9,stroke:#2e7d32
+    classDef error fill:#ffebee,stroke:#c62828
+    classDef shutdown fill:#fafafa,stroke:#424242
+
+    class Inicjalizacja init
+    class StanBytu,Przetwarzanie,PublikacjaWyników active
+    class BłądKrytyczny error
+    class Zatrzymanie shutdown
+```
+---
+
+## Topologia Komunikacji
+
+### Diagram Topologii Sieciowej ZMQ
+
+Poniższy diagram przedstawia szczegółową topologię komunikacji ZMQ w systemie watus_jetson, pokazując wszystkie publisherów, subscriberów oraz tematy wiadomości:
+
+```mermaid
+graph TB
+    subgraph Broker["ZMQ X-SUB/X-PUB Broker"]
+        Szyna((Szyna Komunikacyjna ZMQ))
+    end
+
+    subgraph Publisherzy["Publishers (Wydawcy)"]
+        subgraph WizjaP["Warstwa Wizji"]
+            WizjaPUB["YOLO Detector"]
+            WizjaTop1("Topic: vision.detections")
+            WizjaTop2("Topic: vision.frame_meta")
+        end
+
+        subgraph AudioP["Warstwa Audio"]
+            AudioVAD["VAD Module"]
+            AudioSTT["Faster-Whisper"]
+            AudioTop1("Topic: audio.vad")
+            AudioTop2("Topic: audio.transcript")
+        end
+
+        subgraph LiDARP["Warstwa LiDAR"]
+            LiDARProc["Point Cloud Processor"]
+            LiDARTop("Topic: lidar.obstacles")
+        end
+
+        subgraph SystemP["Monitoring Systemu"]
+            Health["Health Monitor"]
+            HealthTop("Topic: system.health")
+        end
+    end
+
+    subgraph Subscriberzy["Subscribers (Subskrybenci)"]
+        subgraph KonsolidatorS["Consolidator"]
+            KonsolidatorSUB["Data Aggregator"]
+            SubWizja("Subscribe: vision.#")
+            SubAudio("Subscribe: audio.#")
+            SubLiDAR("Subscribe: lidar.#")
+        end
+
+        subgraph LLMS["Warstwa LLM"]
+            FastAPIServer["FastAPI Server"]
+            SubHealth("Subscribe: system.health")
+        end
+
+        subgraph AudioSubS["Warstwa Audio (TTS)"]
+            TTSub["TTS Subscriber"]
+            SubTTS("Topic: tts.speak")
+        end
+
+        subgraph DashboardS["Dashboard/Logging"]
+            Logger["File Logger"]
+            Dashboard["Web Dashboard"]
+        end
+    end
+
+    %% Połączenia Publisher -> Broker
+    WizjaPUB --> WizjaTop1
+    WizjaTop1 -->|TCP 5555| Szyna
+    WizjaPUB --> WizjaTop2
+    WizjaTop2 -->|TCP 5555| Szyna
+
+    AudioVAD --> AudioTop1
+    AudioTop1 -->|TCP 5556| Szyna
+    AudioSTT --> AudioTop2
+    AudioTop2 -->|TCP 5556| Szyna
+
+    LiDARProc --> LiDARTop
+    LiDARTop -->|TCP 5557| Szyna
+
+    Health --> HealthTop
+    HealthTop -->|TCP 5558| Szyna
+
+    %% Połączenia Broker -> Subscriber
+    Szyna -->|TCP 5555-5558| KonsolidatorSUB
+    Szyna -->|TCP 5555-5558| FastAPIServer
+    Szyna -->|TCP 7781| TTSub
+    Szyna -->|TCP 5559| Logger
+    Szyna -->|TCP 5560| Dashboard
+
+    classDef broker fill:#fff9c4,stroke:#f57f17,stroke-width:3px
+    classDef publisher fill:#c8e6c9,stroke:#2e7d32
+    classDef subscriber fill:#bbdefb,stroke:#1565c0
+    classDef topic fill:#f3e5f5,stroke:#4a148c
+
+    class Szyna broker
+    class WizjaPUB,AudioVAD,AudioSTT,LiDARProc,Health publisher
+    class KonsolidatorSUB,FastAPIServer,TTSub,Logger,Dashboard subscriber
+    class WizjaTop1,WizjaTop2,AudioTop1,AudioTop2,LiDARTop,HealthTop,SubWizja,SubAudio,SubLiDAR,SubHealth,SubTTS topic
+```
+### Diagram Wdrożeniowy Systemu
+
+Poniższy diagram przedstawia fizyczne rozmieszczenie komponentów systemu na platformie sprzętowej NVIDIA Jetson wraz z konteneryzacją:
+
+```mermaid
+graph TB
+    subgraph Hardware["NVIDIA Jetson (AGX Orin / Xavier NX)"]
+        subgraph Docker["Środowisko Docker"]
+        
+            subgraph ContainerCore["Container: Core Services"]
+                ZMQBroker["ZMQ Broker\n(X-SUB/X-PUB)"]
+                HealthMon["Health Monitor"]
+                Consolidator["Consolidator\n(Aggregator)"]
+            end
+
+            subgraph ContainerVision["Container: Vision (GPU)"]
+                CUDA["CUDA Runtime"]
+                GStreamer["GStreamer Pipeline"]
+                YOLO["YOLO/RT-DETR\n(TensorRT)"]
+                VisionOutput["Vision Publisher"]
+            end
+
+            subgraph ContainerAudio["Container: Audio"]
+                ALSA["ALSA Drivers"]
+                VAD["VAD (Silero)"]
+                Whisper["Faster-Whisper\n(CTranslate2)"]
+                Piper["Piper TTS\n(ONNX)"]
+                SpeakerID["SpeechBrain\n(ECAPA-TDNN)"]
+            end
+
+            subgraph ContainerLLM["Container: LLM"]
+                FastAPI["FastAPI Server"]
+                ChromaDB["ChromaDB\n(Vector DB)"]
+                Ollama["Ollama (opcjonalnie)\nLokalny LLM"]
+            end
+        end
+    end
+
+    subgraph Peripherals["Urządzenia Peryferyjne"]
+        CameraCSI["Kamera CSI\n(RAW/RGBA)"]
+        USBcam["Kamera USB\n(MJPEG)"]
+        MicArray["Mikrofon Array"]
+        Speaker["Głośnik"]
+        LiDAR["LiDAR\n(Velodyne/Hokuyo)"]
+    end
+
+    subgraph Cloud["Usługi Chmurowe"]
+        OpenAIAPI["OpenAI API\n(gpt-4o)"]
+        GeminiAPI["Google Gemini API\n(gemini-1.5-flash)"]
+        AnthropicAPI["Anthropic API\n(claude-3-5-sonnet)"]
+    end
+
+    %% Połączenia peryferia -> kontenery
+    CameraCSI --> GStreamer
+    USBcam --> GStreamer
+    MicArray --> ALSA
+    Speaker --> ALSA
+    LiDAR --> VisionOutput
+
+    %% Połączenia wewnątrz kontenerów
+    GStreamer --> YOLO
+    YOLO --> VisionOutput
+    VisionOutput --> ZMQBroker
+
+    ALSA --> VAD
+    VAD --> Whisper
+    Whisper --> SpeakerID
+    Whisper --> Piper
+    Piper --> ALSA
+
+    VAD --> ZMQBroker
+    Piper --> ZMQBroker
+
+    ZMQBroker --> Consolidator
+    Consolidator --> FastAPI
+    FastAPI --> ChromaDB
+
+    %% Połączenia zewnętrzne
+    FastAPI --> OpenAIAPI
+    FastAPI --> GeminiAPI
+    FastAPI --> AnthropicAPI
+    FastAPI --> Ollama
+
+    classDef hardware fill:#e1f5fe,stroke:#01579b
+    classDef container fill:#f3e5f5,stroke:#4a148c
+    classDef service fill:#e8f5e9,stroke:#1b5e20
+    classDef cloud fill:#fff3e0,stroke:#e65100
+    classDef peripheral fill:#ffebee,stroke:#c62828
+
+    class Hardware hardware
+    class Docker container
+    class ContainerCore,ContainerVision,ContainerAudio,ContainerLLM container
+    class ZMQBroker,HealthMon,Consolidator,CUDA,GStreamer,YOLO,VisionOutput,ALSA,VAD,Whisper,Piper,SpeakerID,FastAPI,ChromaDB,Ollama service
+    class OpenAIAPI,GeminiAPI,AnthropicAPI cloud
+    class CameraCSI,USBcam,MicArray,Speaker,LiDAR peripheral
+```
+### Diagram Przepływu Błędów i Odzyskiwania
+
+Poniższy diagram przedstawia mechanizm obsługi błędów i automatycznego odzyskiwania w systemie watus_jetson:
+
+```mermaid
+graph TD
+    Start([Komponent X\nGeneruje Wyjątek])
+
+    %% Sprawdzenie typu błędu
+    SprawdzCzyOdzyskiwalny{Sprawdź czy błąd\njest odzyskiwalny?}
+
+    %% Błąd odzyskiwalny
+    TakTak[Tak - Błąd przejściowy]
+    LogWarning["Log: WARNING\n(retry_count++)"]
+    SprawdzRetry{"Czy retry_count\n< max_retries?"}
+    TakTak --> LogWarning
+    LogWarning --> SprawdzRetry
+    SprawdzRetry -->|Tak| CzekajExponential["Wait (exponential\nbackoff)"]
+    CzekajExponential --> Retry([Ponów operację])
+    SprawdzRetry -->|Nie| NieNie["Log: ERROR\n(Exceeded retries)"]
+
+    %% Błąd nieodzyskiwalny
+    NieNie2[Nie - Błąd krytyczny]
+    LogError["Log: ERROR\n(detailed traceback)"]
+    NieNie2 --> LogError
+
+    %% Publikacja błędu
+    PolaczKoniec{Łączy obie ścieżki}
+    LogWarning --> PolaczKoniec
+    NieNie --> PolaczKoniec
+    LogError --> PolaczKoniec
+
+    PolaczKoniec --> PublikujBlad["Publish: system/error\n(topic: system.health)"]
+    PublikujBlad --> ZatrzymajKomponent["Stop Component X\n(graceful shutdown)"]
+
+    %% Watchdog
+    Watchdog{Watchdog\nMonitor}
+    ZatrzymajKomponent --> Watchdog
+
+    Watchdog -->|Brak Heartbeat\nprzez timeout| RestartKontener["Restart Container\n(Component X)"]
+    Watchdog -->|Błąd krytyczny| PowiadomAdmin["Notify Admin\n(SMS/Email)"]
+    Watchdog -->|Wielokrotne błędy| TrybAwaryjny["Enter Safe Mode\n(Limited functionality)"]
+
+    RestartKontener --> Inicjalizacja([Inicjalizuj\nComponent X])
+
+    %% Stan awaryjny
+    TrybAwaryjny --> OgraniczonyPrzetwarz["Ograniczone\nprzetwarzanie"]
+    OgraniczonyPrzetwarz --> MonitorowanieA["Monitorowanie\nprzez 5 minut"]
+    MonitorowanieA -->|Brak błędów| PowrotNormalny["Powrót do\nnormalnej pracy"]
+    MonitorowanieA -->|Nowe błędy| ZamkniecieCalkowite["Całkowite\nzamknięcie systemu"]
+
+    PowrotNormalny --> Inicjalizacja
+
+    %% Styl
+    classDef start fill:#4caf50,stroke:#2e7d32,color:white
+    classDef decision fill:#ff9800,stroke:#e65100
+    classDef process fill:#2196f3,stroke:#1565c0,color:white
+    classDef error fill:#f44336,stroke:#c62828,color:white
+    classDef recovery fill:#ffeb3b,stroke:#f57f17
+
+    class Start,Retry,Inicjalizacja start
+    class SprawdzCzyOdzyskiwalny,SprawdzRetry,Watchdog decision
+    class LogWarning,LogError,CzekajExponential,PublikujBlad,ZatrzymajKomponent,RestartKontener,OgraniczonyPrzetwarz,MonitorowanieA process
+    class TakTak,NieNie,NieNie2 error
+    class PowrotNormalny,TrybAwaryjny recovery
+```
+### Diagram Schematu Bazy Danych ChromaDB
+
+Poniższy diagram przedstawia strukturę danych w bazie wektorowej ChromaDB wykorzystywanej przez system watus_jetson do przechowywania kontekstu konwersacji:
+
+```mermaid
+classDiagram
+    class Collection {
+        +string name
+        +string id
+        +Metadata metadata
+        +int count
+        +add(documents, embeddings, metadatas, ids)
+        +get(ids, where, limit, offset)
+        +delete(ids, where)
+        +query(query_embeddings, n_results, where)
+        +modify(name, new_name, new_metadata)
+    }
+
+    class Document {
+        +string id
+        +string content
+        +List[float] embedding
+        +Metadata metadata
+        +created_at: datetime
+        +updated_at: datetime
+    }
+
+    class Metadata {
+        +string source
+        +string category
+        +datetime timestamp
+        +string speaker_id
+        +string conversation_id
+        +int chunk_index
+    }
+
+    class EmbeddingModel {
+        +string provider
+        +string model_name
+        +int dimensions
+        +encode(text) List[float]
+        +encode_batch(texts) List[List[float]]
+    }
+
+    class QueryResult {
+        +List[string] ids
+        +List[List[float]] embeddings
+        +List[string] documents
+        +List[Metadata] metadatas
+        +List[float] distances
+    }
+
+    Collection "1" --> "*" Document : zawiera
+    Document "1" --> "1" Metadata : posiada
+    Document "*" --> "1" EmbeddingModel : generowany przez
+    EmbeddingModel --> QueryResult : zwraca
+    Collection --> QueryResult : query()
+
+    classDef collection fill:#e3f2fd,stroke:#1565c0
+    classDef document fill:#e8f5e9,stroke:#2e7d32
+    classDef metadata fill:#fff3e0,stroke:#e65100
+    classDef model fill:#f3e5f5,stroke:#4a148c
+    classDef result fill:#ffebee,stroke:#c62828
+
+    class Collection collection
+    class Document document
+    class Metadata metadata
+    class EmbeddingModel model
+    class QueryResult result
+```
+### Diagram Sekwencji Inicjalizacji Systemu
+
+Poniższy diagram sekwencyjny przedstawia szczegółowy proces uruchamiania systemu watus_jetson wraz z zależnościami między komponentami:
+
+```mermaid
+sequenceDiagram
+    participant SysInit as System Init\n(/etc/systemd)
+    participant Docker as Docker Daemon
+    participant ZMQ as ZMQ Broker
+    participant Vision as Warstwa Wizji
+    participant LiDAR as Warstwa LiDAR
+    participant Audio as Warstwa Audio
+    participant LLM as Warstwa LLM
+    participant Consolidator as Consolidator
+
+    Note over SysInit, Consolidator: Faza 1: Inicjalizacja infrastruktury
+
+    SysInit->>Docker: docker-compose up -d
+    Docker->>ZMQ: Start Container\n(Port 5555-5558)
+    activate ZMQ
+    ZMQ-->>Docker: Broker Ready\n(bind ports)
+
+    Note over ZMQ, Consolidator: Faza 2: Inicjalizacja sterowników sprzętowych
+
+    Docker->>Vision: Start Vision Container\n(GPU access)
+    Docker->>LiDAR: Start LiDAR Container\n(USB/UART access)
+    Docker->>Audio: Start Audio Container\n(ALSA access)
+
+    activate Vision
+    activate LiDAR
+    activate Audio
+
+    Vision->>Vision: Load YOLO Model\n(yolo12s.pt)
+    LiDAR->>LiDAR: Init LiDAR Driver\n(UDP/TCP)
+    Audio->>Audio: Init Audio Device\n(ALSA/PulseAudio)
+
+    Vision-->>Docker: Vision Ready
+    LiDAR-->>Docker: LiDAR Ready
+    Audio-->>Docker: Audio Ready
+
+    Note over Docker, LLM: Faza 3: Inicjalizacja usług wyższych warstw
+
+    Docker->>LLM: Start LLM Container\n(REST API)
+    activate LLM
+    LLM->>LLM: Load Config\n(.env)
+    LLM->>ChromaDB: Init Vector DB\n(persist_directory)
+    LLM->>LLM: Init LLM Clients\n(Gemini/OpenAI/Anthropic)
+
+    LLM-->>Docker: LLM API Ready\n(port 8000)
+
+    Docker->>Consolidator: Start Consolidator
+    activate Consolidator
+    Consolidator->>ZMQ: Connect SUB\n(ports 5555-5557)
+    Consolidator->>ZMQ: Connect PUB\n(port 7780)
+    Consolidator->>LLM: Connect HTTP\n(api1/process_question)
+
+    Consolidator-->>Docker: Consolidator Ready
+
+    Note over Consolidator, Vision: Faza 4: Weryfikacja i rozpoczęcie przetwarzania
+
+    Docker->>All Components: System START\n(command)
+
+    Vision->>ZMQ: Subscribe: system.control
+    LiDAR->>ZMQ: Subscribe: system.control
+    Audio->>ZMQ: Subscribe: system.control
+    Consolidator->>ZMQ: Subscribe: system.control
+
+    ZMQ-->>Vision: START Command
+    ZMQ-->>LiDAR: START Command
+    ZMQ-->>Audio: START Command
+    ZMQ-->>Consolidator: START Command
+
+    Note over Vision, Consolidator: System działa - rozpoczęcie przetwarzania danych
+
+    Vision->>Vision: Start Capture Loop\n(Vision Pipeline Active)
+    LiDAR->>LiDAR: Start Scan Loop\n(LiDAR Pipeline Active)
+    Audio->>Audio: Start Listen Loop\n(Audio Pipeline Active)
+
+    Vision-->>ZMQ: Publish: vision.detections
+    LiDAR-->>ZMQ: Publish: lidar.obstacles
+    Audio-->>ZMQ: Publish: audio.transcript
+
+    ZMQ-->>Consolidator: Aggregated Data\n(Real-time Context)
+```
 ---
 
 ## 11. Optymalizacja i Wdrożenie na Jetson AGX Orin
@@ -1606,7 +2422,7 @@ Planowana jest migracja silników inferencji na natywne rozwiązania NVIDIA Tens
 
 ### Architektura Docelowa (High-Performance)
 
-```text
+```
 Jetson AGX Orin
 ├── OpenAI-Compatible API Server (TensorRT-LLM)
 │   └── llama-7b.engine (FP16/INT8)
@@ -1615,7 +2431,6 @@ Jetson AGX Orin
 └── Watus Audio
     └── piper.onnx (z akceleracją)
 ```
-
 ### Przewodnik Migracji (Skrót)
 
 #### 1. Instalacja TensorRT-LLM
@@ -1634,7 +2449,6 @@ trtllm-build --checkpoint_dir ./trt_ckpt \
              --gemm_plugin float16 \
              --max_batch_size 4
 ```
-
 #### 3. Konwersja YOLO
 
 ```python
@@ -1642,9 +2456,253 @@ from ultralytics import YOLO
 model = YOLO("yolov8s.pt")
 model.export(format="engine", device=0, half=True, workspace=4)
 ```
-
 #### 4. Uruchomienie Serwera API
 
 Należy uruchomić serwer fasady zgodny z OpenAI API, który pod spodem wykorzystuje `TensorRT-LLM`. Pozwoli to na bezinwazyjną integrację z `warstwa_llm` (zmiana `base_url` na localhost).
 
 Więcej szczegółów, skrypty serwera i pełne instrukcje znajdują się w pliku **`watus_jetson_optymalizacja.md`**.
+
+## 12. Hierarchia Wywołań Funkcji
+
+Poniższy diagram przedstawia szczegółową hierarchię wywołań funkcji w systemie watus_jetson, pokazującą zależności między modułami oraz przepływ sterowania w kodzie źródłowym.
+
+### Diagram Hierarchii Wywołań Funkcji
+
+```mermaid
+graph TB
+    subgraph "warstwa_wizji/"
+        subgraph "main.py"
+            M_Main["main()"]:::entry
+            M_InitCamera["init_camera()"]
+            M_LoadModel["load_yolo_model()"]
+            M_CaptureLoop["capture_frame_loop()"]:::loop
+            M_ProcessLoop["process_detection_loop()"]:::loop
+            M_PublishResults["publish_vision_results()"]
+        end
+
+        subgraph "src/"
+            M_Preprocess["preprocess_image(frame)"]
+            M_Inference["run_inference(tensor)"]
+            M_Postprocess["postprocess_detections(results)"]
+            M_NMS["non_max_suppression(detections)"]
+            M_FormatOutput["format_detection_output()"]
+        end
+
+        M_Main --> M_InitCamera
+        M_Main --> M_LoadModel
+        M_InitCamera --> M_CaptureLoop
+        M_LoadModel --> M_ProcessLoop
+        M_CaptureLoop --> M_Preprocess
+        M_Preprocess --> M_Inference
+        M_Inference --> M_Postprocess
+        M_Postprocess --> M_NMS
+        M_NMS --> M_FormatOutput
+        M_FormatOutput --> M_PublishResults
+    end
+
+    subgraph "warstwa_audio/"
+        subgraph "run_watus.py"
+            A_Main["main()"]:::entry
+            A_InitAudio["init_audio_devices()"]
+            A_InitVAD["init_vad_model()"]
+            A_InitSTT["init_whisper_model()"]
+            A_InitTTS["init_piper_tts()"]
+            A_InitSpeaker["init_speaker_id()"]
+            A_AudioPipeline["run_audio_pipeline()"]:::loop
+        end
+
+        subgraph "run_reporter.py"
+            A_ZMQSub["zmq_subscribe_loop()"]:::loop
+            A_ParseTranscript["parse_transcript()"]
+            A_CallLLM["call_llm_api()"]
+            A_HandleResponse["handle_llm_response()"]
+            A_TriggerTTS["trigger_tts_synthesis()"]
+        end
+
+        subgraph "camera_runner.py"
+            A_ReadContext["read_vision_context()"]
+            A_BuildPrompt["build_context_prompt()"]
+        end
+
+        subgraph "watus_audio/"
+            A_VADProcess["process_vad(audio_chunk)"]
+            A_STTTranscribe["transcribe_audio(audio)"]
+            A_SpeakerIdentify["identify_speaker(audio)"]
+            A_TTSSynthesize["synthesize_speech(text)"]
+        end
+
+        A_Main --> A_InitAudio
+        A_Main --> A_InitVAD
+        A_Main --> A_InitSTT
+        A_Main --> A_InitTTS
+        A_Main --> A_InitSpeaker
+        A_InitAudio --> A_AudioPipeline
+        A_AudioPipeline --> A_VADProcess
+        A_VADProcess --> A_STTTranscribe
+        A_STTTranscribe --> A_SpeakerIdentify
+        A_STTTranscribe --> A_ZMQSub
+        A_ZMQSub --> A_ParseTranscript
+        A_ParseTranscript --> A_ReadContext
+        A_ReadContext --> A_BuildPrompt
+        A_BuildPrompt --> A_CallLLM
+        A_CallLLM --> A_HandleResponse
+        A_HandleResponse --> A_TriggerTTS
+        A_TriggerTTS --> A_TTSSynthesize
+    end
+
+    subgraph "warstwa_llm/"
+        subgraph "src/main.py"
+            L_Main["main()"]:::entry
+            L_InitFastAPI["init_fastapi()"]
+            L_InitClients["init_llm_clients()"]
+            L_InitDB["init_chromadb()"]
+            L_StartServer["start_server()"]:::loop
+        end
+
+        subgraph "src/vectordb.py"
+            L_InitVectorDB["__init__()"]
+            L_AddDocument["add_document()"]
+            L_SearchContext["search_context()"]
+            L_GetEmbedding["get_embedding()"]
+            L_GetHistory["get_conversation_history()"]
+            L_ClearContext["clear_context()"]
+        end
+
+        subgraph "src/__init__.py"
+            L_LoadPrompts["load_system_prompts()"]
+            L_BuildPrompt["build_rag_prompt()"]
+            L_SelectModel["select_llm_model()"]
+            L_FormatResponse["format_response()"]
+        end
+
+        L_Main --> L_InitFastAPI
+        L_Main --> L_InitClients
+        L_Main --> L_InitDB
+        L_InitFastAPI --> L_StartServer
+        L_StartServer --> L_LoadPrompts
+        L_InitDB --> L_AddDocument
+        L_InitDB --> L_SearchContext
+        L_SearchContext --> L_GetEmbedding
+        L_AddDocument --> L_GetEmbedding
+        L_LoadPrompts --> L_BuildPrompt
+        L_SearchContext --> L_BuildPrompt
+        L_BuildPrompt --> L_SelectModel
+        L_SelectModel --> L_FormatResponse
+    end
+
+    subgraph "lidar/"
+        subgraph "run.py"
+            LDR_Main["main()"]:::entry
+            LDR_InitLiDAR["init_lidar_driver()"]
+            LDR_Connect["connect_lidar()"]
+            LDR_ScanLoop["run_scan_loop()"]:::loop
+        end
+
+        subgraph "run_vis.py"
+            LDR_Visualize["visualize_point_cloud()"]
+            LDR_ProcessData["process_lidar_data()"]
+        end
+
+        LDR_Main --> LDR_InitLiDAR
+        LDR_InitLiDAR --> LDR_Connect
+        LDR_Connect --> LDR_ScanLoop
+        LDR_ScanLoop --> LDR_ProcessData
+        LDR_ProcessData --> LDR_Visualize
+    end
+
+    subgraph "consolidator/"
+        subgraph "consolidator.py"
+            C_Main["main()"]:::entry
+            C_InitZMQ["init_zmq_subscriber()"]
+            C_ConnectVision["connect_vision_stream()"]
+            C_ConnectAudio["connect_audio_stream()"]
+            C_ConnectLiDAR["connect_lidar_stream()"]
+            C_AggregateLoop["run_aggregation_loop()"]:::loop
+            C_SyncTimestamps["synchronize_timestamps()"]
+            C_BuildContext["build_context_payload()"]
+            C_SendToLLM["send_to_llm()"]
+        end
+
+        C_Main --> C_InitZMQ
+        C_InitZMQ --> C_ConnectVision
+        C_InitZMQ --> C_ConnectAudio
+        C_InitZMQ --> C_ConnectLiDAR
+        C_ConnectVision --> C_AggregateLoop
+        C_ConnectAudio --> C_AggregateLoop
+        C_ConnectLiDAR --> C_AggregateLoop
+        C_AggregateLoop --> C_SyncTimestamps
+        C_SyncTimestamps --> C_BuildContext
+        C_BuildContext --> C_SendToLLM
+    end
+
+    %% Międzymodułowe wywołania ZMQ
+    M_PublishResults -.->|ZMQ PUB 5555| C_AggregateLoop
+    A_ZMQSub -.->|ZMQ PUB 5556| C_AggregateLoop
+    LDR_ProcessData -.->|ZMQ PUB 5557| C_AggregateLoop
+    C_SendToLLM -.->|HTTP POST| L_StartServer
+    A_CallLLM -.->|HTTP POST| L_StartServer
+    A_TriggerTTS -.->|ZMQ SUB 7781| A_TTSSynthesize
+
+    classDef entry fill:#4caf50,stroke:#2e7d32,color:white
+    classDef loop fill:#2196f3,stroke:#1565c0,color:white
+    classDef module fill:#ff9800,stroke:#e65100
+    classDef external fill:#9c27b0,stroke:#4a148c,color:white
+
+    class M_Main,A_Main,L_Main,LDR_Main,C_Main entry
+    class M_CaptureLoop,M_ProcessLoop,A_AudioPipeline,A_ZMQSub,L_StartServer,LDR_ScanLoop,C_AggregateLoop loop
+```
+### Szczegółowa Hierarchia Wywołań według Modułów
+
+#### 12.1 Warstwa Wizji (`warstwa_wizji/`)
+
+Moduł warstwy wizji implementuje klasyczny pipeline przetwarzania obrazu z wykorzystaniem modeli detekcji obiektów. Główny punkt wejścia stanowi funkcja `main()` w pliku `main.py`, która orkiestruje całość procesu detekcji. Funkcja ta wywołuje kolejno `init_camera()` odpowiedzialną za konfigurację i uruchomienie strumienia wideo z kamery (lokalnej lub RTSP), oraz `load_yolo_model()` ładującą wybrany model detekcji do pamięci GPU. Po inicjalizacji uruchamiane są dwie równoległe pętle: `capture_frame_loop()` przechwytująca klatki ze strumienia wideo i umieszczająca je w buforze, oraz `process_detection_loop()` pobierająca klatki z bufora i wykonująca na nich inferencję modelu.
+
+Funkcja `capture_frame_loop()` działa w trybie ciągłym, wykorzystując bibliotekę OpenCV do przechwytywania kolejnych klatek. Każda przechwycona klatka jest przekazywana do funkcji `preprocess_image()`, która wykonuje konwersję przestrzeni kolorów z BGR do RGB, zmianę rozmiaru do wymiarów oczekiwanych przez model (domyślnie 640×640 pikseli), normalizację wartości pikseli do zakresu [0, 1] oraz transformację z formatu HWC (Height-Width-Channels) do CHW (Channels-Height-Width). Tak przygotowany tensor jest następnie przekazywany do funkcji `run_inference()`, która wywołuje model YOLO lub RT-DETR na GPU.
+
+Wyniki inferencji w postaci surowych tensorów są przetwarzane przez funkcję `postprocess_detections()`, która wywołuje `non_max_suppression()` w celu eliminacji nadmiarowych bounding boxów dla tych samych obiektów. Funkcja `format_detection_output()` formatuje wykryte obiekty do struktury JSON zawierającej klasę obiektu, współrzędne bounding boxa, współczynnik ufności oraz pole powierzchni. Na końcu `publish_vision_results()` publikuje sformatowane dane na gniazdo ZMQ na porcie 5555.
+
+#### 12.2 Warstwa Audio (`warstwa_audio/`)
+
+Warstwa audio stanowi najbardziej złożony moduł systemu, integrujący cztery niezależne podsystemy przetwarzania mowy. Główny orchestrator `run_watus.py` zawiera funkcję `main()` inicjalizującą wszystkie komponenty poprzez wywołanie `init_audio_devices()` konfigurującej urządzenia wejścia/wyjścia ALSA, `init_vad_model()` ładującą model wykrywania aktywności głosowej, `init_whisper_model()` inicjalizującą model Faster-Whisper do transkrypcji, `init_piper_tts()` konfigurującą syntetyzator mowy, oraz `init_speaker_id()` ładującą model identyfikacji mówcy SpeechBrain.
+
+Główna pętl przetwarzania `run_audio_pipeline()` wywołuje cyklicznie `process_vad(audio_chunk)` z modułu `watus_audio/`, która analizuje fragmenty audio w poszukiwaniu segmentów zawierających mowę. Po wykryciu aktywności głosowej, segment audio jest przekazywany do `transcribe_audio()` wywołującej model Whisper. Wynikowa transkrypcja jest następnie przetwarzana przez `identify_speaker()` generującą wektor osadzeniowy głosu i porównującą go z bazą znanych mówców.
+
+Równolegle działa `zmq_subscribe_loop()` z pliku `run_reporter.py`, która subskrybuje wiadomości z szyny ZMQ na porcie 7780 (temat `dialog.leader`). Po odebraniu transkrypcji wywoływana jest `parse_transultat()`, a następnie `read_vision_context()` z `camera_runner.py` pobierająca aktualny kontekst wizualny z pliku `camera.jsonl`. Funkcja `build_context_prompt()` łączy transkrypcję z kontekstem wizualnym w kompletny prompt, który jest wysyłany do LLM poprzez `call_llm_api()`. Odpowiedź LLM jest następnie przetwarzana przez `handle_response()` i `trigger_tts_synthesis()`, co inicjuje syntezę mowy przez `synthesize_speech()`.
+
+#### 12.3 Warstwa LLM (`warstwa_llm/`)
+
+Warstwa LLM zbudowana jest wokół serwera FastAPI obsługującego zapytania HTTP od pozostałych komponentów systemu. Funkcja `main()` w `src/main.py` inicjalizuje serwer poprzez `init_fastapi()` konfigurującą endpointy API, `init_llm_clients()` tworzącą połączenia z dostawcami modeli językowych (Google Gemini, OpenAI, Anthropic), oraz `init_chromadb()` inicjalizującą bazę wektorową.
+
+Główna pętl serwera `start_server()` obsługuje przychodzące zapytania HTTP na endpoint `/api1/process_question`. Dla każdego zapytania wywoływana jest sekwencja funkcji: `load_system_prompts()` z `src/__init__.py` ładująca zdefiniowane prompty systemowe, `search_context()` z `src/vectordb.py` wyszukująca podobne konteksty w ChromaDB, `get_embedding()` generująca wektor osadzeniowy dla zapytania, oraz `build_rag_prompt()` konstruująca kompletny prompt zawierający system prompt, kontekst z bazy wektorowej oraz zapytanie użytkownika.
+
+Funkcja `select_llm_model()` na podstawie kategorii zapytania wybiera odpowiedniego dostawcę LLM i wywołuje generowanie odpowiedzi. Wynikowy tekst jest formatowany przez `format_response()`, a cała interakcja (zapytanie i odpowiedź) jest zapisywana do bazy wektorowej poprzez `add_document()` dla przyszłego wykorzystania w mechanizmie RAG.
+
+#### 12.4 Warstwa LiDAR (`lidar/`)
+
+Moduł LiDAR jest odpowiedzialny za przetwarzanie danych z czujników odległości i generowanie semantycznego opisu przeszkód w otoczeniu. Funkcja `main()` w `run.py` wywołuje `init_lidar_driver()` konfigurującą połączenie z czujnikiem (UDP/TCP w zależności od modelu LiDAR), a następnie `connect_lidar()` nawiązującą fizyczne połączenie i inicjalizującą strumień danych.
+
+Główna pętl `run_scan_loop()` cyklicznie pobiera dane z czujnika i przekazuje je do `process_lidar_data()`, która wykonuje dekodowanie surowych pakietów pomiarowych, konwersję na chmurę punktów 3D (X, Y, Z, Intensity), filtrację statystyczną usuwającą szumy outliers, voxel grid filtering redukujący liczbę punktów, segmentację podłogi algorytmem RANSAC oraz clustering przestrzenny metodą Euclidean Distance w celu identyfikacji oddzielnych obiektów.
+
+Wizualizacja przetworzonych danych jest realizowana przez `visualize_point_cloud()` z `run_vis.py`, która może wykorzystywać biblioteki takie jak Open3D, RViz lub rysowanie 2D dla profilu 2D. Wyniki przetwarzania są publikowane na szynę ZMQ poprzez dedykowaną funkcję publishującą dane semantyczne (pozycja, wymiary, typ obiektu) na porcie 5557.
+
+#### 12.5 Consolidator (`consolidator/`)
+
+Consolidator pełni rolę agregatora danych sensorycznych, synchronizując informacje pochodzące z warstw wizji, audio i LiDAR. Funkcja `main()` w `consolidator.py` wywołuje `init_zmq_subscriber()` inicjalizującą połączenia subskrypcyjne do wszystkich trzech źródeł danych, a następnie nawiązuje połączenia poprzez `connect_vision_stream()`, `connect_audio_stream()` oraz `connect_lidar_stream()` konfigurujące subskrypcję na odpowiednich portach i tematach ZMQ.
+
+Główna pętl agregacji `run_aggregation_loop()` nasłuchuje wiadomości ze wszystkich trzech źródeł, buforując przychodzące dane i synchronizując je czasowo poprzez `synchronize_timestamps()`. Funkcja ta dopasowuje dane z różnych źródeł na podstawie znaczników czasowych, tworząc spójny obraz sytuacyjny. `build_context_payload()` konstruuje strukturę danych zawierającą zagregowane informacje ze wszystkich sensorów, która jest następnie wysyłana do warstwy LLM poprzez `send_to_llm()` wywołującą endpoint HTTP `/api1/process_question`.
+
+### Tabela Zależności Między Modułami
+
+
+| Moduł Wywołujący | Funkcja Wywołująca     | Moduł Wywoływany | Funkcja Wywoływana    | Protokół   |
+| ------------------- | ------------------------ | ------------------ | ---------------------- | ------------ |
+| warstwa_wizji       | publish_vision_results() | consolidator       | run_aggregation_loop() | ZMQ PUB 5555 |
+| warstwa_audio       | call_llm_api()           | warstwa_llm        | start_server()         | HTTP POST    |
+| warstwa_audio       | trigger_tts_synthesis()  | warstwa_audio      | synthesize_speech()    | ZMQ SUB 7781 |
+| consolidator        | send_to_llm()            | warstwa_llm        | start_server()         | HTTP POST    |
+| camera_runner       | read_vision_context()    | warstwa_wizji      | camera.jsonl           | Plik         |
+| warstwa_audio       | read_vision_context()    | warstwa_wizji      | camera.jsonl           | Plik         |
+
+### Podsumowanie Hierarchii
+
+Architektura systemu watus_jetson opiera się na wzorcu pipeline'ów przetwarzania, gdzie każdy moduł implementuje własną pętlę główną nasłuchującą danych wejściowych i publikującą wyniki przetwarzania. Wywołania międzymodułowe realizowane są poprzez asynchroniczną komunikację ZMQ (dla strumieniowych danych sensorycznych) oraz synchroniczne zapytania HTTP (dla interakcji z warstwą LLM). Taki podział zapewnia luźne powiązanie między komponentami, wysoką przepustowość danych oraz możliwość niezależnego skalowania poszczególnych warstw w zależności od wymagań wydajnościowych aplikacji.

@@ -105,6 +105,20 @@ class OccupancyGrid:
         height_m: float = MAP_HEIGHT_M,
         cell_size_m: float = CELL_SIZE_M,
     ):
+        """
+        Inicjalizuje pustą siatkę zajętości (Occupancy Grid).
+        
+        Tworzy macierze numpy dla typów komórek, zagrożeń i liczników trafień.
+        Ustawia koordynaty (0,0) robota w centrum mapy.
+        
+        Argumenty:
+            width_m (float): Szerokość mapy w metrach.
+            height_m (float): Wysokość mapy w metrach.
+            cell_size_m (float): Rozmiar pojedynczej komórki w metrach.
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.__init__() -> OccupancyGrid()
+        """
         self.width_m = float(width_m)
         self.height_m = float(height_m)
         self.cell_size = float(cell_size_m)
@@ -156,6 +170,21 @@ class OccupancyGrid:
     # =========================
 
     def _set_cell_type(self, ix: int, iy: int, new_type: CellType):
+        """
+        Ustawia typ komórki z uwzględnieniem priorytetów.
+        
+        Nie nadpisuje przeszkód statycznych (STATIC_OBSTACLE) typem HUMAN, 
+        aby uniknąć migotania przy nakładaniu się obiektów.
+        
+        Argumenty:
+            ix (int): Indeks X komórki.
+            iy (int): Indeks Y komórki.
+            new_type (CellType): Nowy typ komórki.
+            
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _set_cell_type()
+            occupancy_grid.py -> _bump_obstacle_hits() -> _set_cell_type()
+        """
         """Ustawia typ komórki z prostą logiką priorytetów."""
         current = CellType(int(self.cell_type[iy, ix]))
 
@@ -167,6 +196,19 @@ class OccupancyGrid:
         self.cell_type[iy, ix] = int(new_type)
 
     def _bump_obstacle_hits(self, ix: int, iy: int):
+        """
+        Inkrementuje licznik trafień przeszkody w danej komórce.
+        
+        Jeśli licznik przekroczy próg MIN_HITS_FOR_STATIC, komórka staje się STATIC_OBSTACLE.
+        Zabezpiecza przed przepełnieniem licznika (GRID_MAX_OBSTACLE_HITS).
+        
+        Argumenty:
+            ix (int): Indeks X komórki.
+            iy (int): Indeks Y komórki.
+            
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _bump_obstacle_hits()
+        """
         """Zwiększa licznik obstacle_hits z saturacją."""
         hits = int(self.obstacle_hits[iy, ix])
         if hits < GRID_MAX_OBSTACLE_HITS:
@@ -177,6 +219,18 @@ class OccupancyGrid:
             self._set_cell_type(ix, iy, CellType.STATIC_OBSTACLE)
 
     def _decay_obstacle_hit(self, ix: int, iy: int):
+        """
+        Zmniejsza licznik trafień przeszkody, gdy promień przechodzi przez komórkę (jest wolna).
+        
+        Jeśli licznik spadnie do 0, komórka jest oznaczana jako FREE (chyba że jest HUMAN).
+        
+        Argumenty:
+            ix (int): Indeks X komórki.
+            iy (int): Indeks Y komórki.
+            
+        Hierarchia wywołań:
+            occupancy_grid.py -> _mark_ray_free() -> _decay_obstacle_hit()
+        """
         """Opcjonalny zanik obstacle_hits gdy promień przechodzi jako FREE."""
         if HIT_DECAY_FREE <= 0:
             return
@@ -218,9 +272,20 @@ class OccupancyGrid:
 
     def _mark_ray_free(self, pose: Pose2D, x_hit: float, y_hit: float):
         """
-        Czyści komórki po drodze promienia:
-        - jeśli brak obstacle_hits -> oznacza FREE (chyba, że HUMAN),
-        - jeśli obstacle_hits > 0 -> pozwala na zanik (HIT_DECAY_FREE).
+        Wykonuje Ray Tracing od robota do punktu trafienia, czyszcząc komórki po drodze.
+        
+        Dla każdej komórki na drodze promienia:
+        - Jeśli brak historii trafień -> ustawia FREE.
+        - Jeśli są trafienia -> zmniejsza licznik (decay).
+        - Pomija komórki oznaczone jako HUMAN.
+        
+        Argumenty:
+            pose (Pose2D): Pozycja początkowa (robot).
+            x_hit (float): Współrzędna X końca promienia.
+            y_hit (float): Współrzędna Y końca promienia.
+            
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _mark_ray_free()
         """
         # start (pozycja robota)
         x0, y0 = pose.x, pose.y
@@ -256,6 +321,18 @@ class OccupancyGrid:
                 self._decay_obstacle_hit(ix, iy)
 
     def _mark_danger_around(self, ix_hit: int, iy_hit: int):
+        """
+        Oznacza komórki w säsiedztwie wykrytego człowieka jako DANGER.
+        
+        Tworzy strefę buforową wokół człowieka o promieniu GRID_DANGER_RADIUS_CELLS.
+        
+        Argumenty:
+            ix_hit (int): Indeks X komórki z człowiekiem.
+            iy_hit (int): Indeks Y komórki z człowiekiem.
+            
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _mark_danger_around()
+        """
         """Oznacza komórki w promieniu GRID_DANGER_RADIUS_CELLS jako DANGER."""
         r = GRID_DANGER_RADIUS_CELLS
         for dy in range(-r, r + 1):
@@ -322,6 +399,15 @@ class OccupancyGrid:
     # =========================
 
     def count_cells_by_type(self) -> Dict[CellType, int]:
+        """
+        Zlicza liczbę komórek każdego typu (FREE, OCCUPIED, HUMAN, UNKNOWN).
+        
+        Zwraca:
+            Dict[CellType, int]: Słownik {typ_komórki: liczebność}.
+            
+        Hierarchia wywołań:
+             lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> logging/debug
+        """
         """Zwraca słownik: typ komórki -> liczba."""
         result: Dict[CellType, int] = {}
         for t in CellType:
@@ -329,10 +415,30 @@ class OccupancyGrid:
         return result
 
     def count_danger_cells(self) -> int:
+        """
+        Zlicza komórki oznaczone jako DANGER (strefa niebezpieczna).
+        
+        Zwraca:
+            int: Liczba niebezpiecznych komórek.
+            
+        Hierarchia wywołań:
+             lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> logging/debug
+        """
         """Liczba komórek z flagą DANGER."""
         return int(np.sum(self.cell_danger == int(CellDanger.DANGER)))
 
     def to_json_dict(self) -> Dict[str, Any]:
+        """
+        Serializuje stan mapy do słownika JSON.
+        
+        Konwertuje macierze numpy na listy Pythona.
+        
+        Zwraca:
+            Dict[str, Any]: Słownik reprezentujący stan mapy (wymiary, dane komórek).
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.get_scan_data() -> to_json_dict()
+        """
         """
         Struktura gotowa do zapisania w JSON (mapa + warstwa DANGER).
         Uwaga: tablice zamienione na listy intów.
@@ -470,11 +576,40 @@ class OccupancyGrid:
     # =========================
 
     def beam_to_world_point(self, beam: BeamResult, pose: Pose2D) -> Tuple[float, float]:
+        """
+        Konwertuje wynik pomiaru wiązki na punkt globalny (x, y).
+        
+        Helper API dla innych modułów.
+        
+        Argumenty:
+            beam (BeamResult): Dane wiązki (kąt, odległość).
+            pose (Pose2D): Pozycja robota.
+            
+        Zwraca:
+            Tuple[float, float]: Pozycja w układzie globalnym.
+            
+        Hierarchia wywołań:
+            Zewnętrzne moduły wizualizacji/debuggowania.
+        """
         """BeamResult + Pose2D -> punkt (x,y) w świecie."""
         x_local, y_local = self._beam_to_local_xy(beam)
         x_world, y_world = self._local_to_world(pose, x_local, y_local)
         return x_world, y_world
 
     def local_to_world_point(self, pose: Pose2D, x_local: float, y_local: float) -> Tuple[float, float]:
+        """
+        Wrapper na wewnętrzną konwersję lokalne -> globalne.
+        
+        Argumenty:
+            pose (Pose2D): Pozycja robota.
+            x_local (float): X w układzie robota.
+            y_local (float): Y w układzie robota.
+            
+        Zwraca:
+            Tuple[float, float]: X, Y w układzie świata.
+            
+        Hierarchia wywołań:
+            Zewnętrzne moduły wizualizacji.
+        """
         """Lokalne (x,y) robota -> globalne (x,y)."""
         return self._local_to_world(pose, x_local, y_local)

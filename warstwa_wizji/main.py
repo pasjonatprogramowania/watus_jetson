@@ -84,6 +84,13 @@ class CVAgent:
     Hierarchia wywołań:
         warstwa_wizji/main.py -> main() -> CVAgent()
     """
+    
+    # =========================================================================
+    # SEKCJA 1: INICJALIZACJA I KONFIGURACJA
+    # =========================================================================
+    # W tej sekcji następuje ładowanie modeli (YOLO, klasyfikatory), konfiguracja
+    # strumienia wideo (lokalna kamera lub RTSP przez GStreamer) oraz ustawienie
+    # parametrów wydajnościowych (buforowanie, optymalizacje OpenCV).
     def __init__(
             self,
             weights_path: str = "yolo12s.pt",
@@ -373,6 +380,11 @@ class CVAgent:
         try:
             self.fps_params["t_prev"] = time.time()
 
+            # =========================================================================
+            # SEKCJA 2: PĘTLA GŁÓWNA I PRZECHWYTYWANIE OBRAZU
+            # =========================================================================
+            # Główna pętla programu. Pobiera klatkę z bufora kamery. Jeśli strumień
+            # się zerwie, pętla jest przerywana. Obsługuje też reinicjalizację statystyk.
             while True:
                 ret, frame_bgr = self.cap.read()
                 if not ret:
@@ -383,6 +395,12 @@ class CVAgent:
                 detections["countOfObjects"] = 0
                 detections["objects"] = []
 
+                # =========================================================================
+                # SEKCJA 3: DETEKCJA OBIEKTÓW (YOLO / RT-DETR)
+                # =========================================================================
+                # Tutaj uruchamiany jest główny model detekcji (np. yolov8/12). 
+                # Parametr `det_stride` pozwala pomijać klatki dla zwiększenia FPS.
+                # Wynikiem są surowe detekcje (boxy) oraz ID trackerów.
                 run_detection = (self.frame_idx % det_stride == 0)
 
                 dets = self.detect_objects(frame_bgr, run_detection=run_detection)
@@ -396,6 +414,12 @@ class CVAgent:
                     track_ids = dets.boxes.id.int().cpu().tolist()
                     labels = dets.boxes.cls.int().cpu().tolist()
                     
+                    # =========================================================================
+                    # SEKCJA 4: INTEGRACJA Z DANYMI LIDAR (DATA FUSION)
+                    # =========================================================================
+                    # Próba skojarzenia obiektów wizyjnych (2D) z trackerami LiDAR (3D).
+                    # Dopasowanie odbywa się na podstawie kąta azymutu obu obiektów.
+                    # Pozwala to przypisać odległość (precyzyjną z lasera) do osoby z kamery.
                     # --- LIDAR SYNC ---
                     lidar_matches = {} # map track_id -> lidar_track_dict
                     if consolidate_with_lidar:
@@ -444,6 +468,12 @@ class CVAgent:
 
                         self.actualize_tracks(frame_bgr, track_id, (x, y)) if verbose_window else None
 
+                        # =========================================================================
+                        # SEKCJA 5: DETEKCJA ATRYBUTÓW (UBRANIA, EMOCJE, WIEK)
+                        # =========================================================================
+                        # Dla wykrytych osób, wycinany jest fragment obrazu (crop) i przekazywany
+                        # do dodatkowych klasyfikatorów. Wyniki są cache'owane co N klatek
+                        # aby oszczędzać zasoby obliczeniowe.
                         # --- CLOTHES DETECTION ON PERSON ---
                         if label == 0:  # Person
                             b_x1, b_y1, b_x2, b_y2 = map(int, boxes_xyxy[i].tolist())
@@ -624,6 +654,11 @@ class CVAgent:
                         detections["countOfObjects"] += 1
                         detections["countOfPeople"] += (1 if label == 0 else 0)
 
+                # =========================================================================
+                # SEKCJA 6: DETEKCJA BRONI (BEZPIECZEŃSTWO)
+                # =========================================================================
+                # Opcjonalny moduł uruchamiany co 10 klatek. Służy do wykrywania zagrożeń.
+                # Wykorzystuje osobny, dedykowany model YOLO.
                 # --- WEAPON DETECTION ---
                 if weapon_detection_enabled and (self.frame_idx % 10 == 0):
                     with torch.inference_mode():
@@ -666,6 +701,11 @@ class CVAgent:
                             "lidar": {}
                         })
                             
+                # =========================================================================
+                # SEKCJA 7: STATYSTYKI I WYŚWIETLANIE (OSD)
+                # =========================================================================
+                # Obliczanie FPS, jasności sceny oraz rysowanie nakładki tekstowej na obraz.
+                # Przygotowuje finalny obraz do wyświetlenia w oknie i zapisu.
                 ema_fps = self.calc_fps() if show_fps else 0
 
                 height = frame_bgr.shape[0]
@@ -686,6 +726,11 @@ class CVAgent:
                             1,
                             (255, 255, 255), 2) if verbose_window else None
 
+                # =========================================================================
+                # SEKCJA 8: ZAPIS DANYCH WYJŚCIOWYCH
+                # =========================================================================
+                # Eksport przetworzonych metadanych do pliku JSONL (komunikacja z resztą systemu)
+                # oraz zapis klatki wideo do pliku MP4 (jeśli włączono).
                 self.save_to_json("camera.jsonl", detections) if self.save_to_json is not None else None
                 # print(f"Detections: ", pretty_print_dict(detections), f"FPS: {ema_fps:.1f}") if verbose \
                     # else None
