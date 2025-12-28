@@ -20,10 +20,10 @@
 
 ---
 
-
 > [!IMPORTANT]
 > **Status Implementacji (v1.x vs v2.0)**
 > Niniejsza dokumentacja opisuje **docelową architekturę v2.0** opartą w pełni na szynie danych ZeroMQ. Obecna wersja kodu (v1.x) znajduje się w fazie przejściowej i działa w trybie **hybrydowym**:
+>
 > - **Warstwa Audio:** Wykorzystuje ZMQ + HTTP.
 > - **Warstwa Wizji i LiDAR:** Wykorzystują głównie pliki JSON (`camera.jsonl`, `lidar.json`) do wymiany danych.
 > - **Consolidator:** Obecnie odczytuje pliki, trwają prace nad migracją na pełne ZMQ (patrz: `system_improvement_plan.md`).
@@ -308,7 +308,7 @@ Automatyczne pobranie domyślnego modelu następuje przy pierwszym uruchomieniu 
 
 ```python
 from ultralytics import YOLO
-model = YOLO('yolov8n.pt')  # Pobiera model automatycznie
+model = YOLO('yolo12s.pt')  # Pobiera model automatycznie (domyślny w projekcie)
 ```
 
 Dla modeli RT-DETR należy użyć poniższej instrukcji:
@@ -421,7 +421,8 @@ watus_jetson/
 │   ├── consolidator.py     # Główny skrypt consolidatora
 │   └── consolidator.json   # Plik konfiguracyjny
 ├── lidar/                  # Moduł przetwarzania danych LiDAR
-│   ├── lidar.py            # Skrypt przetwarzania chmury punktów
+│   ├── run.py              # Skrypt uruchomieniowy modułu LiDAR
+│   ├── run_vis.py          # Skrypt wizualizacji danych LiDAR
 │   └── requirements.txt    # Zależności modułu LiDAR
 ├── warstwa_audio/          # Moduł przetwarzania audio
 │   ├── run_watus.py        # Główny frontend audio (orchestrator)
@@ -509,7 +510,7 @@ Biblioteka Ultralytics oferuje bogate możliwości konfiguracji procesu detekcji
 
 | Parametr | Wartość Domyslna | Opis                                       |
 | -------- | ------------------ | ------------------------------------------ |
-| model    | yolov8n.pt         | Ścieżka lub nazwa modelu do załadowania |
+| model    | yolo12s.pt         | Ścieżka lub nazwa modelu do załadowania |
 | conf     | 0.25               | Minimalny próg ufności dla detekcji      |
 | iou      | 0.45               | Próg IoU dla NMS                          |
 | imgsz    | 640                | Rozmiar obrazu wejściowego                |
@@ -767,53 +768,50 @@ collection = client.get_or_create_collection(
 
 #### Integracja z Modelami Językowymi
 
-Warstwa LLM wspiera wielu dostawców modeli językowych, umożliwiając elastyczny wybór optymalnego modelu dla danego zastosowania. Każdy dostawca jest konfigurowany poprzez dedykowany klucz API i identyfikator modelu w pliku `.env`.
+Warstwa LLM wykorzystuje bibliotekę **`pydantic-ai`**, która zapewnia ujednolicony interfejs dla różnych dostawców modeli oraz silne typowanie danych wejściowych i wyjściowych. Dzięki temu zmiana modelu (np. z GPT-4 na Gemini) wymaga jedynie zmiany konfiguracji, a nie logiki kodu.
 
-**Google Gemini:**
-
-```python
-import google.generativeai as genai
-
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
-
-response = model.generate_content([
-    {"role": "user", "parts": [prompt]}
-])
-```
-
-**OpenAI GPT:**
+**Ujednolicona definicja Agenta:**
 
 ```python
-from openai import OpenAI
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.anthropic import AnthropicModel
+import os
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# 1. Wybór modelu na podstawie konfiguracji
+provider = os.getenv("LLM_PROVIDER", "gemini")
 
-response = client.chat.completions.create(
-    model=os.getenv("OPENAI_MODEL", "gpt-4o"),
-    messages=[
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_question}
-    ],
-    temperature=0.7,
-    max_tokens=1000
+if provider == "gemini":
+    model = GeminiModel(
+        model_name=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+        api_key=os.getenv("GEMINI_API_KEY")
+    )
+elif provider == "openai":
+    model = OpenAIModel(
+        model_name=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+elif provider == "anthropic":
+    model = AnthropicModel(
+        model_name=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet"),
+        api_key=os.getenv("ANTHROPIC_API_KEY")
+    )
+
+# 2. Definicja Agenta z kontekstem i narzędziami
+agent = Agent(
+    model,
+    system_prompt="Jesteś Watus, inteligentnym asystentem robota Jetson.",
+    deps_type=dict  # Typ zależności (np. kontekst świata)
 )
+
+# 3. Uruchomienie (interfejs jest identyczny dla każdego modelu)
+async def process_query(user_text: str, world_context: dict):
+    result = await agent.run(user_text, deps=world_context)
+    return result.data
 ```
 
-**Anthropic Claude:**
-
-```python
-import anthropic
-
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-response = client.messages.create(
-    model=os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
-    max_tokens=1000,
-    system=system_prompt,
-    messages=[{"role": "user", "content": user_question}]
-)
-```
+To podejście znacznie upraszcza kod i pozwala na łatwe dodawanie nowych modeli (w tym lokalnych przez OpenAI-compatible API) bez modyfikacji logiki biznesowej.
 
 #### Klasyfikacja Zapytań
 
@@ -1594,7 +1592,6 @@ def call_llm_api(prompt):
 
 System watus_jetson stanowi zaawansowaną platformę do budowy wielomodułowych aplikacji robotycznych wykorzystujących sztuczną inteligencję. Modularna architektura oparta na komunikacji ZMQ umożliwia elastyczne skalowanie i dostosowywanie systemu do różnych scenariuszy zastosowań. Dokumentacja niniejsza stanowi kompleksowy przewodnik instalacyjny i referencyjny dla deweloperów pracujących z kodem źródłowym projektu.
 
-
 ---
 
 ## 11. Optymalizacja i Wdrożenie na Jetson AGX Orin
@@ -1602,13 +1599,14 @@ System watus_jetson stanowi zaawansowaną platformę do budowy wielomodułowych 
 Planowana jest migracja silników inferencji na natywne rozwiązania NVIDIA TensorRT, aby w pełni wykorzystać potencjał platformy Jetson AGX Orin. Poniżej znajduje się skrócony przewodnik optymalizacji (szczegóły w pliku `watus_jetson_optymalizacja.md`).
 
 ### Korzyści z TensorRT
+
 - **10x szybszy First Token** dla LLM (200ms vs 2000ms).
 - **6x więcej tokenów/s** (30 t/s vs 5 t/s).
 - **5x szybsza detekcja YOLO** (15ms vs 80ms).
 
 ### Architektura Docelowa (High-Performance)
 
-```
+```text
 Jetson AGX Orin
 ├── OpenAI-Compatible API Server (TensorRT-LLM)
 │   └── llama-7b.engine (FP16/INT8)
@@ -1621,9 +1619,11 @@ Jetson AGX Orin
 ### Przewodnik Migracji (Skrót)
 
 #### 1. Instalacja TensorRT-LLM
+
 Wymagany JetPack 5.1+, CUDA 11.4+. Należy zbudować `TensorRT-LLM` ze źródeł lub użyć kontenera Docker NVIDIA L4T.
 
 #### 2. Konwersja Modeli LLM
+
 ```bash
 # 1. Pobranie modelu (np. Mistral-7B)
 huggingface-cli download mistralai/Mistral-7B-Instruct-v0.2
@@ -1636,6 +1636,7 @@ trtllm-build --checkpoint_dir ./trt_ckpt \
 ```
 
 #### 3. Konwersja YOLO
+
 ```python
 from ultralytics import YOLO
 model = YOLO("yolov8s.pt")
@@ -1643,6 +1644,7 @@ model.export(format="engine", device=0, half=True, workspace=4)
 ```
 
 #### 4. Uruchomienie Serwera API
+
 Należy uruchomić serwer fasady zgodny z OpenAI API, który pod spodem wykorzystuje `TensorRT-LLM`. Pozwoli to na bezinwazyjną integrację z `warstwa_llm` (zmiana `base_url` na localhost).
 
 Więcej szczegółów, skrypty serwera i pełne instrukcje znajdują się w pliku **`watus_jetson_optymalizacja.md`**.
