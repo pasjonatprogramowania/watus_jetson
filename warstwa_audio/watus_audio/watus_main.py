@@ -16,7 +16,20 @@ atexit.register(led_controller.cleanup)
 zmq_bus = None # Zostanie zainicjalizowany w main
 
 def indicate_listen_state():
-    """Sygnalizuje stan nasłuchiwania (log + LED + ZMQ)."""
+    """
+    Sygnalizuje stan nasłuchiwania (log + LED + ZMQ).
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - run_watus.py -> watus_main() -> main() -> indicate_listen_state()
+        - watus_main.py -> main() -> SpeechToTextProcessingEngine (callbacks) -> indicate_listen_state()
+        - watus_main.py -> tts_worker_thread() -> indicate_listen_state()
+    """
     log_message("[Watus][STATE] LISTENING")
     led_controller.indicate_listening_state()
     if zmq_bus:
@@ -26,7 +39,19 @@ def indicate_listen_state():
             pass
 
 def indicate_think_state():
-    """Sygnalizuje stan myślenia/przetwarzania."""
+    """
+    Sygnalizuje stan myślenia/przetwarzania.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - watus_main.py -> main() -> SpeechToTextProcessingEngine (callbacks) -> indicate_think_state()
+        - stt.py -> SpeechToTextProcessingEngine._process_recorded_speech_segment() -> callbacks['indicate_think_state']()
+    """
     log_message("[Watus][STATE] THINKING")
     led_controller.indicate_processing_state()
     if zmq_bus:
@@ -36,7 +61,18 @@ def indicate_think_state():
             pass
 
 def indicate_speak_state():
-    """Sygnalizuje stan mówienia."""
+    """
+    Sygnalizuje stan mówienia.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - watus_main.py -> tts_worker_thread() -> indicate_speak_state()
+    """
     log_message("[Watus][STATE] SPEAKING")
     led_controller.indicate_processing_state()
     if zmq_bus:
@@ -46,13 +82,36 @@ def indicate_speak_state():
             pass
 
 def indicate_idle_state():
-    """Sygnalizuje stan bezczynności."""
+    """
+    Sygnalizuje stan bezczynności.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - watus_main.py -> main() -> SpeechToTextProcessingEngine (callbacks) -> indicate_idle_state()
+        - stt.py -> SpeechToTextProcessingEngine.start_listening_loop() -> callbacks['indicate_idle_state']()
+    """
     log_message("[Watus][STATE] IDLE")
     led_controller.indicate_processing_state()
 
 def tts_worker_thread(system_state: SystemState, message_bus: ZMQMessageBus, output_device_index):
     """
     Wątek obsługujący kolejkę TTS. Odbiera wiadomości z busa i uruchamia syntezę mowy.
+    
+    Argumenty:
+        system_state (SystemState): Obiekt stanu systemu do synchronizacji wątków.
+        message_bus (ZMQMessageBus): Szyna komunikatów do odbierania poleceń TTS.
+        output_device_index (int): Indeks urządzenia wyjściowego audio.
+    
+    Zwraca:
+        None (pętla nieskończona)
+    
+    Hierarchia wywołań:
+        - watus_main.py -> main() -> threading.Thread(target=tts_worker_thread) -> tts_worker_thread()
     """
     log_message("[Watus] Piper ready.")
     while True:
@@ -79,7 +138,19 @@ def tts_worker_thread(system_state: SystemState, message_bus: ZMQMessageBus, out
             indicate_listen_state()
 
 def main():
-    """Główna funkcja uruchamiająca proces Watus."""
+    """
+    Główna funkcja uruchamiająca proces Watus.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - run_watus.py -> watus_main() -> main()
+        - warstwa_audio.watus_audio.__init__.py (eksport jako watus_main)
+    """
     global zmq_bus
     log_message(f"[Env] ASR=Faster WHISPER_MODEL={config.WHISPER_MODEL_NAME} WHISPER_DEVICE={config.WHISPER_DEVICE} "
         f"WHISPER_COMPUTE={config.WHISPER_COMPUTE} WATUS_BLOCKSIZE={config.BLOCK_SIZE}")

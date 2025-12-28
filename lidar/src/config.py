@@ -17,11 +17,16 @@ LIDAR_ANGLE_OFFSET_DEG: float = 0.0
 # MAPA / OCCUPANCY GRID
 # =========================
 
+# Szerokość mapy occupancy grid w metrach.
 MAP_WIDTH_M: float = 24.0
+# Wysokość mapy occupancy grid w metrach.
 MAP_HEIGHT_M: float = 24.0
+# Rozmiar pojedynczej komórki mapy w metrach (rozdzielczość).
 CELL_SIZE_M: float = 0.25
 
+# Ile razy komórka musi zostać trafiona, by uznać ją za "statyczną przeszkodę".
 MIN_HITS_FOR_STATIC: int = 3
+# O ile zmniejszamy licznik trafień przy "pustym" przelocie (free space).
 HIT_DECAY_FREE: int = 0
 
 # Promień strefy zagrożenia w liczbie komórek (1 = sąsiedztwo 8).
@@ -35,6 +40,8 @@ GRID_MAX_OBSTACLE_HITS: int = 255
 # LIDAR / HARDWARE
 # =========================
 
+# Port szeregowy LiDARu.
+# Dla Windows: "COM3", "COM4". Dla Linux: "/dev/ttyUSB0".
 LIDAR_PORT: str = "/dev/ttyUSB0"
 
 LIDAR_BAUDRATE: int = 230400
@@ -56,7 +63,9 @@ R_MAX_M: float = 12.0          # [m] – ucinamy > 12 m
 # SEGMENTACJA
 # =========================
 
+# Maksymalna różnica odległości (metry) między punktami, by uznać je za ciągły segment.
 SEG_MAX_DISTANCE_JUMP_M: float = 1.0
+# Maksymalna różnica kątowa (stopnie) dla ciągłości segmentu.
 SEG_MAX_ANGLE_JUMP_DEG: float = 10.0
 SEG_MIN_BEAMS: int = 2
 
@@ -74,6 +83,7 @@ SEG_HUMAN_MIN_BEAMS: int = 9          # minimalna liczba wiązek w segmencie
 # =========================
 
 # maks. odległość między detekcją a trackiem, żeby je dopasować
+# Maks. odległość (metry) środka obiektu od predykcji tracka, by wciąż to był ten sam obiekt.
 TRACK_MAX_MATCH_DISTANCE_M: float = 1.0
 
 # ile kolejnych skanów możemy "nie widzieć" tracka, zanim go uznamy za zniknięty

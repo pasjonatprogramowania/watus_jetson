@@ -19,6 +19,10 @@ def calc_obj_angle(
 
     Zwraca:
       Kąt w stopniach (dodatni w prawo, ujemny w lewo).
+      
+    Hierarchia wywołań:
+        warstwa_wizji/main.py -> CVAgent.run() -> calc_obj_angle()
+        warstwa_wizji/src/cv_utils/angle.py -> main() (test)
     """
     (x1, y1), (x2, y2) = p1, p2
     W = image_width

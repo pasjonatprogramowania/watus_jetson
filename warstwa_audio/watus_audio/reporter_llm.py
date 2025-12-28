@@ -9,7 +9,18 @@ from .common import log_message, write_object_to_jsonl_file
 _RETRY_IN_REGEX = re.compile(r"retry in ([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
 def parse_retry_hint_from_error(error_response_body: str) -> Optional[float]:
-    """Parsuje sugestię czasu oczekiwania (retry-after) z treści błędu."""
+    """
+    Parsuje sugestię czasu oczekiwania (retry-after) z treści błędu.
+    
+    Argumenty:
+        error_response_body (str): Treść błędu HTTP.
+        
+    Zwraca:
+        float: Czas oczekiwania w sekundach (lub None).
+        
+    Hierarchia wywołań:
+        reporter_main.py -> main() -> parse_retry_hint_from_error()
+    """
     if not error_response_body: return None
     if ("RESOURCE_EXHAUSTED" in error_response_body or " 429 " in error_response_body or "\"code\": 429" in error_response_body):
         match = _RETRY_IN_REGEX.search(error_response_body)
@@ -28,6 +39,9 @@ def send_query_to_llm(content_text: str) -> Tuple[Optional[str], Optional[int], 
         
     Zwraca:
         Tuple: (odpowiedź, kod_statusu, błąd, opóźnienie_ms)
+        
+    Hierarchia wywołań:
+        reporter_main.py -> main() -> send_query_to_llm()
     """
     if not config.LLM_HTTP_URL:
         return None, None, "LLM_HTTP_URL is empty", 0.0

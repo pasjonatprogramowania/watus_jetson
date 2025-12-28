@@ -126,7 +126,13 @@ class OccupancyGrid:
     # =========================
 
     def world_to_cell(self, x: float, y: float) -> Optional[Tuple[int, int]]:
-        """Świat (m) -> indeksy komórki (ix, iy). Zwraca None gdy poza mapą."""
+        """
+        Świat (m) -> indeksy komórki (ix, iy). Zwraca None gdy poza mapą.
+        
+        Hierarchia wywołań:
+            occupancy_grid.py -> _mark_ray_free() -> world_to_cell()
+            occupancy_grid.py -> update_from_scan() -> world_to_cell()
+        """
         ix = int((x - self.x_min) / self.cell_size)
         iy = int((y - self.y_min) / self.cell_size)
 
@@ -135,7 +141,12 @@ class OccupancyGrid:
         return None
 
     def cell_to_world(self, ix: int, iy: int) -> Tuple[float, float]:
-        """Środek komórki (ix,iy) -> (x,y) w metrach."""
+        """
+        Środek komórki (ix,iy) -> (x,y) w metrach.
+        
+        Hierarchia wywołań:
+            occupancy_grid.py -> compute_safety_output() -> cell_to_world()
+        """
         x = self.x_min + (ix + 0.5) * self.cell_size
         y = self.y_min + (iy + 0.5) * self.cell_size
         return x, y
@@ -178,13 +189,25 @@ class OccupancyGrid:
                 self.cell_type[iy, ix] = int(CellType.FREE)
 
     def _beam_to_local_xy(self, beam: BeamResult) -> Tuple[float, float]:
-        """Konwersja wiązki lidarowej (r,theta) -> lokalne XY robota."""
+        """
+        Konwersja wiązki lidarowej (r,theta) -> lokalne XY robota.
+        
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _beam_to_local_xy()
+        """
         x = beam.r * np.cos(beam.theta)
         y = beam.r * np.sin(beam.theta)
         return x, y
 
     def _local_to_world(self, pose: Pose2D, x_local: float, y_local: float) -> Tuple[float, float]:
-        """Lokalne (x,y) robota -> globalne (x,y)."""
+        """
+        Lokalne (x,y) robota -> globalne (x,y).
+        
+        Używa pozycji i orientacji robota (Pose2D).
+        
+        Hierarchia wywołań:
+            occupancy_grid.py -> update_from_scan() -> _local_to_world()
+        """
         cos_yaw = np.cos(pose.yaw)
         sin_yaw = np.sin(pose.yaw)
 
@@ -254,6 +277,13 @@ class OccupancyGrid:
         - warstwa DANGER:
             * jest czyszczona na każdy skan,
             * ustawiana TYLKO dla wiązek HUMAN.
+            
+        Argumenty:
+            pose (Pose2D): Aktualna pozycja robota.
+            beams (List[BeamResult]): Lista wiązek z Lidaru.
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> update_from_scan()
         """
         # 1) warstwa DANGER jest chwilowa -> czyścimy na start
         self.cell_danger[:, :] = int(CellDanger.NO_DANGER)
@@ -332,6 +362,12 @@ class OccupancyGrid:
         Uwaga:
         - STOP ma priorytet nad WARNING (jeśli jest STOP, warning=True też).
         - Rozpatrujemy tylko komórki z CellDanger.DANGER.
+        
+        Zwraca:
+            SafetyOutput: Obiekt z flagami bezpieczeństwa.
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> compute_safety_output()
         """
         # znajdź wszystkie komórki zagrożenia
         ys, xs = np.where(self.cell_danger == int(CellDanger.DANGER))

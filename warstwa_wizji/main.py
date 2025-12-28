@@ -37,6 +37,19 @@ ESCAPE_BUTTON = "q"
 
 
 def pretty_print_dict(d, indent=1):
+    """
+    Pomocnicza funkcja do ładnego wypisywania słowników (recursive).
+    
+    Argumenty:
+        d (dict): Słownik do wypisania.
+        indent (int): Poziom wcięcia.
+        
+    Zwraca:
+        str: Sformatowany ciąg znaków.
+        
+    Hierarchia wywołań:
+        warstwa_wizji/main.py -> CVAgent.run() -> pretty_print_dict() (zakomentowane debugowanie)
+    """
     res = "\n"
     for k, v in d.items():
         res += "\t"*indent + str(k)
@@ -55,6 +68,22 @@ def pretty_print_dict(d, indent=1):
     return res
 
 class CVAgent:
+    """
+    Główny agent wizyjny (Computer Vision).
+    
+    Obsługuje pobieranie obrazu z kamery/strumienia, detekcję obiektów (YOLO/RT-DETR),
+    śledzenie, klasyfikację atrybutów (płeć, wiek, emocje, ubrania) oraz integrację z Lidarem.
+    
+    Atrybuty:
+        cap (cv2.VideoCapture): Obiekt przechwytywania wideo.
+        detector (YOLO): Główny model detekcji osób.
+        clothes_detector (YOLO): Model detekcji ubrań.
+        guns_detector (YOLO): Model detekcji broni.
+        classifiers (ImageClassifier): Zestaw klasyfikatorów atrybutów.
+        
+    Hierarchia wywołań:
+        warstwa_wizji/main.py -> main() -> CVAgent()
+    """
     def __init__(
             self,
             weights_path: str = "yolo12s.pt",
@@ -64,6 +93,11 @@ class CVAgent:
             json_save_func=None,
             use_net_stream: bool = True
         ):
+        """
+        Inicjalizuje CVAgent.
+        
+        Ładuje modele, konfiguruje strumień wideo i parametry.
+        """
         self.save_to_json = json_save_func
         self.imgsz = imgsz
         self.track_history = defaultdict(lambda: [])
@@ -129,6 +163,18 @@ class CVAgent:
         self.window_name = f"YOLOv12 – naciśnij '{ESCAPE_BUTTON}' aby wyjść"
 
     def init_recorder(self, out_path):
+        """
+        Inicjalizuje nagrywanie wideo do pliku.
+        
+        Argumenty:
+            out_path (str): Ścieżka pliku wynikowego (.mp4).
+            
+        Zwraca:
+            bool: True jeśli udało się zainicjalizować.
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> init_recorder()
+        """
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         fps_cap = self.cap.get(cv2.CAP_PROP_FPS)
         fps_output = float(fps_cap) if fps_cap and fps_cap > 1.0 else 20.0
@@ -141,9 +187,26 @@ class CVAgent:
             return True
 
     def init_window(self):
+        """
+        Tworzy okno podglądu OpenCV.
+        
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> init_window()
+        """
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
 
     def actualize_tracks(self, frame_bgr, track_id, point: tuple[int, int]):
+        """
+        Rysuje historię (ścieżkę) poruszania się obiektu.
+        
+        Argumenty:
+            frame_bgr (np.ndarray): Klatka obrazu.
+            track_id (int): ID śledzonego obiektu.
+            point (tuple): Aktualna pozycja (x, y).
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> actualize_tracks()
+        """
         x, y = point
         track = self.track_history[track_id]
         track.append((float(x), float(y)))
@@ -155,6 +218,15 @@ class CVAgent:
         cv2.polylines(frame_bgr, [points], False, color=(230, 230, 230), thickness=10)
 
     def calc_fps(self):
+        """
+        Oblicza FPS (klatki na sekundę) wygładzone wykładniczo (EMA).
+        
+        Zwraca:
+            float: Wartość FPS.
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> calc_fps()
+        """
         ema_alpha, last_stat_t, t_prev, show_fps_every = self.fps_params.values()
         now = time.time()
         inst_fps = 1.0 / max(1e-6, (now - t_prev))
@@ -169,6 +241,12 @@ class CVAgent:
         return ema_fps
 
     def warm_up_model(self):
+        """
+        Wykonuje puste wnioskowanie (inference) aby rozgrzać GPU/model.
+        
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> warm_up_model()
+        """
         _ret, _warm = self.cap.read()
         if _ret:
             with torch.inference_mode():
@@ -179,6 +257,20 @@ class CVAgent:
                     _ = self.detector(_warm)
 
     def detect_objects(self, frame_bgr, imgsz: int = 640, run_detection=True):
+        """
+        Uruchamia detekcję osób na klatce.
+        
+        Argumenty:
+            frame_bgr (np.ndarray): Klatka obrazu.
+            imgsz (int): Rozmiar obrazu dla modelu.
+            run_detection (bool): Czy faktycznie uruchomić model (dla pomijania klatek).
+            
+        Zwraca:
+            YOLO Result: Wynik detekcji (boxy, trackery).
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.run() -> detect_objects()
+        """
         if run_detection:
             iou = 0.7
             conf = 0.3
@@ -206,6 +298,29 @@ class CVAgent:
         fov_deg: int = 102,
         consolidate_with_lidar: bool = False,
     ):
+        """
+        Główna pętla przetwarzania wideo.
+        
+        Realizuje:
+        - Pobieranie klatek
+        - Detekcję obiektów (ludzi, broni)
+        - Integrację logiczną z danymi Lidara (dopasowywanie kątowe)
+        - Detekcję szczegółów (ubrania, atrybuty)
+        - Wygładzanie FPS
+        - Zapis wyniku do JSON i wideo
+        
+        Argumenty:
+            save_video (bool): Czy zapisywać wideo.
+            out_path (str): Ścieżka pliku wyjściowego wideo.
+            show_window (bool): Czy pokazywać okno podglądu.
+            det_stride (int): Co ile klatek uruchamiać detekcję.
+            show_fps (bool): Czy pokazywać FPS.
+            verbose (bool): Czy logować detekcje na konsolę.
+            consolidate_with_lidar (bool): Czy łączyć dane z Lidar.json.
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> main() -> run()
+        """
         lidar_path = "../lidar/data/lidar.json"
         lidar_tracks_data = []
 

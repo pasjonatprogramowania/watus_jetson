@@ -17,6 +17,24 @@ FULL_SCAN_PACKETS = 60
 # ========= pomocnicze konwersje ==========
 
 def beam_category_to_int(cat: BeamCategory) -> int:
+    """
+    Konwertuje kategorię wiązki LiDAR na wartość całkowitą.
+    
+    Mapowanie kategorii:
+      - NONE -> 0 (brak kategorii)
+      - HUMAN -> 1 (wykryto człowieka)
+      - OBSTACLE -> 2 (przeszkoda statyczna)
+      - inne -> -1 (nieznana kategoria)
+    
+    Argumenty:
+        cat (BeamCategory): Enum kategorii wiązki z modułu preprocess.
+    
+    Zwraca:
+        int: Wartość całkowita reprezentująca kategorię (0, 1, 2, lub -1).
+    
+    Hierarchia wywołań:
+        run_live.py -> export_scan() -> beam_category_to_int()
+    """
     if cat == BeamCategory.NONE:
         return 0
     if cat == BeamCategory.HUMAN:
@@ -27,17 +45,56 @@ def beam_category_to_int(cat: BeamCategory) -> int:
 
 
 def cell_type_to_int(ct: CellType) -> int:
+    """
+    Konwertuje typ komórki siatki na wartość całkowitą.
+    
+    Argumenty:
+        ct (CellType): Enum typu komórki (UNKNOWN, FREE, STATIC_OBSTACLE, HUMAN).
+    
+    Zwraca:
+        int: Wartość całkowita reprezentująca typ komórki.
+    
+    Hierarchia wywołań:
+        run_live.py -> export_scan() -> cell_type_to_int()
+    """
     return int(ct)
 
 
 def cell_danger_to_int(cd: CellDanger) -> int:
+    """
+    Konwertuje poziom zagrożenia komórki na wartość całkowitą.
+    
+    Argumenty:
+        cd (CellDanger): Enum poziomu zagrożenia (SAFE, DANGER).
+    
+    Zwraca:
+        int: Wartość całkowita reprezentująca poziom zagrożenia.
+    
+    Hierarchia wywołań:
+        run_live.py -> export_scan() -> cell_danger_to_int()
+    """
     return int(cd)
 
 
 # ========= ścieżki i folder sesji ==========
 
 def create_session_dir() -> Path:
-    # tworzy folder sesji: data/processed/lidar/session_YYYYMMDD_HHMMSS
+    """
+    Tworzy katalog sesji dla danych LiDAR.
+    
+    Funkcja tworzy strukturę katalogów:
+    data/processed/lidar/session_YYYYMMDD_HHMMSS/
+    gdzie znacznik czasu jest generowany z aktualnej daty i godziny.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        Path: Ścieżka do utworzonego katalogu sesji.
+    
+    Hierarchia wywołań:
+        run_live.py -> main() -> create_session_dir()
+    """
     this_file = Path(__file__).resolve()
     src_dir = this_file.parent
     project_root = src_dir.parent
@@ -62,7 +119,30 @@ def export_scan(
     pose: Pose2D,
     result,
 ) -> None:
-    # zapisuje jeden skan do folderu scan_00001/{beams,segments,grid,tracks}.json
+    """
+    Eksportuje pojedynczy skan LiDAR do plików JSON.
+    
+    Funkcja zapisuje dane skanu w podkatalogu scan_XXXXX/ tworząc pliki:
+      - beams.json: surowe wiązki LiDAR (kąt, odległość, kategoria)
+      - segments.json: wyodrębnione segmenty (grupy wiązek)
+      - grid.json: siatka zajętości (occupancy grid)
+      - tracks.json: śledzenie obiektów (ludzie)
+    Dodatkowo aktualizuje plik data/lidar.json z ostatnimi danymi śledzenia.
+    
+    Argumenty:
+        session_dir (Path): Ścieżka do katalogu sesji.
+        scan_idx (int): Numer kolejny skanu (używany do nazwy podkatalogu).
+        t (float): Czas skanu w sekundach od początku sesji.
+        pose (Pose2D): Pozycja robota (x, y, yaw) w chwili skanu.
+        result: Obiekt wynikowy z AiwataLidarSystem.process_scan() zawierający
+            beams, segments, grid i human_tracks.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        run_live.py -> main() -> export_scan() -> beam_category_to_int()
+    """
     scan_id_str = f"{scan_idx:05d}"
     scan_dir = session_dir / f"scan_{scan_id_str}"
     scan_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +288,27 @@ def export_scan(
 # ========= main loop ==========
 
 def main() -> None:
-    # inicjalizacja lidara
+    """
+    Główna funkcja przetwarzania LiDAR na żywo.
+    
+    Funkcja inicjalizuje połączenie z LiDAR, tworzy katalog sesji i uruchamia
+    nieskończoną pętlę przetwarzania skanów. W każdej iteracji:
+      1. Pobiera pełny skan z LiDAR (60 pakietów)
+      2. Przetwarza dane przez AiwataLidarSystem (preprocessing, segmentacja, tracking)
+      3. Eksportuje wyniki do plików JSON
+    
+    Pętla może być przerwana przez Ctrl+C.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        run.py -> main()
+        __main__ -> main() -> create_session_dir(), export_scan()
+    """
     try:
         print(f"Próbuję otworzyć lidar na porcie {LIDAR_PORT}...")
         init_lidar(port=LIDAR_PORT)

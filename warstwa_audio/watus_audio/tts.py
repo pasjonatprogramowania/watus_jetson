@@ -29,7 +29,12 @@ except ImportError:
 LOADED_PIPER_VOICE_MODEL = None
 
 def _prepare_env_for_piper_binary(piper_bin_path: str) -> dict:
-    """Przygotowuje zmienne środowiskowe dla binarnego Pipera (biblioteki)."""
+    """
+    Przygotowuje zmienne środowiskowe dla binarnego Pipera (biblioteki).
+    
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_piper() -> _prepare_env_for_piper_binary()
+    """
     env_vars = os.environ.copy()
     bin_dir = os.path.dirname(piper_bin_path) if piper_bin_path else ""
     phonemize_lib_path = os.path.join(bin_dir, "piper-phonemize", "lib")
@@ -51,7 +56,12 @@ def _prepare_env_for_piper_binary(piper_bin_path: str) -> dict:
 
 
 def _initialize_piper_voice_model():
-    """Ładuje model Piper do pamięci (jeśli używamy Python API)."""
+    """
+    Ładuje model Piper do pamięci (jeśli używamy Python API).
+    
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_piper() -> _initialize_piper_voice_model()
+    """
     global LOADED_PIPER_VOICE_MODEL
     if PIPER_AVAILABLE:
         if not LOADED_PIPER_VOICE_MODEL:  # Initialize if not already loaded
@@ -79,6 +89,9 @@ def synthesize_speech_piper(text_to_synthesize: str, audio_output_device_index):
     Argumenty:
         text_to_synthesize (str): Tekst do syntezy.
         audio_output_device_index (int): Indeks urządzenia wyjściowego audio.
+        
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_and_play() -> synthesize_speech_piper()
     """
     if not text_to_synthesize or not text_to_synthesize.strip(): return
 
@@ -151,7 +164,12 @@ def synthesize_speech_piper(text_to_synthesize: str, audio_output_device_index):
 
 
 def _add_wav_header(raw_audio_bytes: bytes, mime_type_string: str) -> bytes:
-    """Generuje nagłówek WAV dla surowych danych audio."""
+    """
+    Generuje nagłówek WAV dla surowych danych audio.
+    
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_gemini() -> _add_wav_header()
+    """
     audio_params = _parse_audio_mime_type(mime_type_string)
     bits_per_sample = audio_params["bits_per_sample"]
     sample_rate_hz = audio_params["rate"]
@@ -182,7 +200,12 @@ def _add_wav_header(raw_audio_bytes: bytes, mime_type_string: str) -> bytes:
 
 
 def _parse_audio_mime_type(mime_type_string: str) -> dict:
-    """Parsuje parametry audio (rate, bits) z typu MIME."""
+    """
+    Parsuje parametry audio (rate, bits) z typu MIME.
+    
+    Hierarchia wywołań:
+        tts.py -> _add_wav_header() -> _parse_audio_mime_type()
+    """
     bits_per_sample = 16
     rate_hz = 24000
 
@@ -211,6 +234,9 @@ def synthesize_speech_gemini(text_to_synthesize: str, audio_output_device_index)
     Argumenty:
         text_to_synthesize (str): Tekst do syntezy.
         audio_output_device_index (int): Indeks urządzenia wyjściowego.
+        
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_and_play() -> synthesize_speech_gemini()
     """
     if not text_to_synthesize or not text_to_synthesize.strip():
         return
@@ -297,7 +323,12 @@ def synthesize_speech_gemini(text_to_synthesize: str, audio_output_device_index)
 LOADED_XTTS_MODEL = None
 
 def _initialize_xtts_model():
-    """Ładuje model XTTS do pamięci."""
+    """
+    Ładuje model XTTS do pamięci.
+    
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_xtts() -> _initialize_xtts_model()
+    """
     global LOADED_XTTS_MODEL
     if LOADED_XTTS_MODEL: return True
     
@@ -317,7 +348,12 @@ def _initialize_xtts_model():
         return False
 
 def synthesize_speech_xtts(text_to_synthesize: str, audio_output_device_index):
-    """Generuje mowę za pomocą Coqui XTTS-v2."""
+    """
+    Generuje mowę za pomocą Coqui XTTS-v2.
+    
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_and_play() -> synthesize_speech_xtts()
+    """
     if not text_to_synthesize or not text_to_synthesize.strip(): return
     
     if not _initialize_xtts_model():
@@ -366,6 +402,9 @@ def synthesize_speech_and_play(text_to_synthesize: str, audio_output_device_inde
     Argumenty:
         text_to_synthesize (str): Tekst do wypowiedzenia.
         audio_output_device_index (int): Indeks urządzenia wyjściowego.
+        
+    Hierarchia wywołań:
+        watus_main.py -> tts_worker_thread() -> synthesize_speech_and_play()
     """
     provider = config.TTS_PROVIDER
     

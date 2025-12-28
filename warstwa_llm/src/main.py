@@ -49,7 +49,21 @@ class WatusActiveState(BaseModel):
 
 
 class DecisionVector(BaseModel):
-    """[Dozwolone?, Czy_działanie?, Poważne?, Potrzeba_info?]"""
+    """
+    [Dozwolone?, Czy_działanie?, Poważne?, Potrzeba_info?]
+    
+    Model danych decyzji podejmowanej przez agenta decyzyjnego.
+    Określa sposób dalszego przetwarzania zapytania użytkownika.
+    
+    Atrybuty:
+        is_allowed (bool): Czy zapytanie jest zgodne z polityką bezpieczeństwa.
+        is_actions_required (bool): Czy zapytanie wymaga podjęcia akcji (np. sterowanie robotem).
+        is_serious (bool): Czy zapytanie jest poważne (czy wymaga poważnej odpowiedzi).
+        is_tool_required (str): Wymagane narzędzie ("google", "watoznawca", lub None).
+        
+    Hierarchia wywołań:
+        main.py -> get_decision_vector() -> DecisionVector
+    """
     is_allowed: bool = Field(..., description="Whether the query is allowed per policy.")
     is_actions_required: bool = Field(..., description="Whether an action is required.")
     is_serious: bool = Field(..., description="Whether the query is serious.")
@@ -78,7 +92,21 @@ class Answer(BaseModel):
 
 
 def log_llm_response(user_query: str, agent_name: str, response: str, response_time: float):
-    """Loguje odpowiedź LLM z pomiarem czasu."""
+    """
+    Loguje odpowiedź LLM z pomiarem czasu.
+    
+    Wypisuje na standardowe wyjście szczegóły interakcji z modelem LLM:
+    pytanie, nazwę agenta, odpowiedź i czas generowania.
+    
+    Argumenty:
+        user_query (str): Zapytanie użytkownika.
+        agent_name (str): Nazwa agenta przetwarzającego zapytanie.
+        response (str): Wygenerowana odpowiedź.
+        response_time (float): Czas odpowiedzi w sekundach.
+        
+    Hierarchia wywołań:
+        main.py -> run_agent_with_logging() -> log_llm_response()
+    """
     print(f"Pytanie: {user_query}")
     print(f"Agent: {agent_name}")
     print(f"Odpowiedz: {response}")
@@ -87,7 +115,25 @@ def log_llm_response(user_query: str, agent_name: str, response: str, response_t
 
 
 def run_agent_with_logging(content: str, agent_name: str, system_prompt: str, output_type: type) -> tuple:
-    """Uruchamia agenta z logowaniem czasu odpowiedzi."""
+    """
+    Uruchamia agenta z logowaniem czasu odpowiedzi.
+    
+    Tworzy instancję agenta PydanticAI, wykonuje zapytanie synchronicznie
+    i loguje wyniki.
+    
+    Argumenty:
+        content (str): Treść zapytania.
+        agent_name (str): Nazwa agenta (do logowania).
+        system_prompt (str): Prompt systemowy definiujący zachowanie agenta.
+        output_type (type): Oczekiwany typ danych wyjściowych (np. str, BaseModel).
+        
+    Zwraca:
+        tuple: (output, response_time) - wynik działania agenta i czas wykonania.
+        
+    Hierarchia wywołań:
+        main.py -> get_decision_vector() -> run_agent_with_logging()
+        main.py -> handle_*_response() -> run_agent_with_logging()
+    """
     agent = Agent(
         model=CURRENT_MODEL,
         output_type=output_type,
@@ -102,7 +148,20 @@ def run_agent_with_logging(content: str, agent_name: str, system_prompt: str, ou
 
 
 def get_decision_vector(content: str) -> DecisionVector:
-    """Sprawdza pytanie pod kątem wszystkich kategorii decyzyjnych w jednym requestcie."""
+    """
+    Sprawdza pytanie pod kątem wszystkich kategorii decyzyjnych w jednym requestcie.
+    
+    Używa agenta decyzyjnego do analizy intencji użytkownika i klasyfikacji zapytania.
+    
+    Argumenty:
+        content (str): Zapytanie użytkownika.
+        
+    Zwraca:
+        DecisionVector: Obiekt z flagami decyzyjnymi (allowed, serious, action, tool).
+        
+    Hierarchia wywołań:
+        main.py -> process_question() -> get_decision_vector() -> run_agent_with_logging()
+    """
     decision_vector, _ = run_agent_with_logging(
         content, "decision_vector_agent", DECISION_VECTOR_SYSTEM_PROMPT, DecisionVector
     )
@@ -110,7 +169,22 @@ def get_decision_vector(content: str) -> DecisionVector:
 
 
 def handle_default_response(content: str, decision_data: dict[str, Any]) -> str:
-    """Obsługuje odpowiedź domyślną."""
+    """
+    Obsługuje odpowiedź domyślną (normalną konwersację).
+    
+    W razie potrzeby dołącza narzędzia (np. wyszukiwanie DuckDuckGo) w zależności
+    od decyzji podjętej wcześniej (decision_data).
+    
+    Argumenty:
+        content (str): Zapytanie użytkownika (z ewentualnie dołączonym kontekstem).
+        decision_data (dict): Słownik z danymi decyzyjnymi.
+        
+    Zwraca:
+        str: Odpowiedź wygenerowana przez model.
+        
+    Hierarchia wywołań:
+        main.py -> process_question() -> handle_default_response()
+    """
     tools = []
     if decision_data[TOOL_REQUIRED] == DUCKDUCKGO_TOOL:
         tools.append(duckduckgo_search_tool())
@@ -166,7 +240,23 @@ def handle_context_response(content: str) -> str:
     return f"Odpowiedź na podstawie kontekstu: {context}"
 
 def vector_search(query: str) -> VectorSearchResult:
-    """Perform vector search in the database with enhanced error handling and logging"""
+    """
+    Perform vector search in the database with enhanced error handling and logging.
+    
+    Initializes the connection to ChromaDB and searches for documents similar to the query.
+    
+    Args:
+        query (str): The search phrase.
+        
+    Returns:
+        VectorSearchResult: Object containing documents, metadata, and distances.
+        
+    Raises:
+        HTTPException: If query is empty, invalid parameters, or no results found.
+        
+    Call Hierarchy:
+        main.py -> process_question() -> vector_search() -> vectordb.search_vector_db()
+    """
     n_results = 3
     try:
         if n_results <= 0:
@@ -225,7 +315,34 @@ app = FastAPI(
 
 
 def process_question(content: str) -> Answer:
-    """Główna funkcja przetwarzająca pytanie z optymalizacją early stopping."""
+    """
+    Główna funkcja przetwarzająca pytanie z optymalizacją early stopping.
+    
+    Realizuje pełny proces decyzyjny:
+    1. Analiza intencji (Decision Vector).
+    2. Sprawdzenie polityki bezpieczeństwa (is_allowed).
+    3. Sprawdzenie powagi zapytania (is_serious).
+    4. Wyszukanie informacji w bazie wektorowej (jeśli wymagane narzędzie).
+    5. Integracja z pamięcią EMMA (pobranie kontekstu).
+    6. Generowanie odpowiedzi właściwej (handle_default_response).
+    7. Konsolidacja pamięci (zapisanie nowej interakcji).
+    
+    Argumenty:
+        content (str): Treść zapytania użytkownika.
+        
+    Zwraca:
+        Answer: Obiekt zawierający odpowiedź i wektor decyzyjny.
+        
+    Hierarchia wywołań:
+        main.py -> process_question_endpoint() -> process_question()
+        main.py -> webhook() -> process_question()
+            -> get_decision_vector()
+            -> handle_warning_response() / handle_funny_response()
+            -> vector_search()
+            -> emma.retrieve_relevant_memories()
+            -> handle_default_response()
+            -> emma.consolidate_memory()
+    """
     try:
         decision_vector = get_decision_vector(content)
 

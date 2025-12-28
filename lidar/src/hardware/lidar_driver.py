@@ -17,6 +17,28 @@ def init_lidar(
     baudrate: int = LIDAR_BAUDRATE,
     timeout: float = LIDAR_TIMEOUT,
 ) -> None:
+    """
+    Inicjalizuje połączenie z LiDAR przez port szeregowy.
+    
+    Funkcja otwiera port szeregowy do komunikacji z LiDAR. Jest idempotentna -
+    jeśli port jest już otwarty, nie wykonuje żadnej akcji.
+    
+    Argumenty:
+        port (str): Nazwa portu szeregowego (np. "/dev/ttyUSB0"). Domyślnie LIDAR_PORT.
+        baudrate (int): Prędkość transmisji w bps. Domyślnie LIDAR_BAUDRATE (230400).
+        timeout (float): Timeout odczytu w sekundach. Domyślnie LIDAR_TIMEOUT.
+    
+    Zwraca:
+        None
+    
+    Wyjątki:
+        serial.SerialException: Gdy nie można otworzyć portu.
+    
+    Hierarchia wywołań:
+        run_live.py -> main() -> init_lidar()
+        Live_Vis_v3.py -> record_scans() -> init_lidar()
+        check_lidar.py -> main() -> init_lidar()
+    """
     # Otwiera port szeregowy do lidaru (idempotentnie)
     global _ser
 
@@ -34,6 +56,24 @@ def init_lidar(
 
 
 def _read_exact(num_bytes: int) -> bytes:
+    """
+    Odczytuje dokładnie podaną liczbę bajtów z portu szeregowego.
+    
+    Funkcja pomocnicza zapewniająca odczyt pełnej ilości danych,
+    nawet jeśli przychodzą w kilku porcjach.
+    
+    Argumenty:
+        num_bytes (int): Liczba bajtów do odczytania.
+    
+    Zwraca:
+        bytes: Odczytane bajty o długości num_bytes.
+    
+    Wyjątki:
+        IOError: Gdy wystąpi timeout przed odczytaniem wszystkich bajtów.
+    
+    Hierarchia wywołań:
+        lidar_driver.py -> _read_one_packet() -> _read_exact()
+    """
     # Czyta dokładnie num_bytes lub rzuca wyjątek przy timeout
     assert _ser is not None
     data = b""
@@ -46,6 +86,24 @@ def _read_exact(num_bytes: int) -> bytes:
 
 
 def _read_one_packet() -> bytes:
+    """
+    Odczytuje jeden pełny pakiet danych z LiDAR.
+    
+    Funkcja synchronizuje się z nagłówkiem pakietu (0x54), odczytuje
+    informacje o liczbie punktów i pobiera resztę danych.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        bytes: Kompletny pakiet danych (11 + 3*N bajtów, gdzie N = liczba punktów).
+    
+    Wyjątki:
+        IOError: Gdy wystąpi timeout oczekiwania na dane.
+    
+    Hierarchia wywołań:
+        lidar_driver.py -> get_next_scan() -> _read_one_packet() -> _read_exact()
+    """
     # Czyta jeden pełny pakiet danych z lidara
     assert _ser is not None
 
@@ -78,6 +136,31 @@ def _read_one_packet() -> bytes:
 
 
 def _parse_packet(packet: bytes) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Parsuje surowy pakiet LiDAR do tablic odległości i kątów.
+    
+    Funkcja dekoduje strukturę pakietu zgodnie z protokołem LiDAR:
+      - bajt 0: nagłówek (0x54)
+      - bajt 1: wersja + liczba punktów (5 dolnych bitów)
+      - bajty 2-3: prędkość
+      - bajty 4-5: kąt startowy
+      - bajty 6 do N*3+5: dane punktów (odległość 2B + intensywność 1B)
+      - ostatnie bajty: kąt końcowy, timestamp, CRC
+    
+    Argumenty:
+        packet (bytes): Surowy pakiet danych z _read_one_packet().
+    
+    Zwraca:
+        Tuple[np.ndarray, np.ndarray]: Krotka (distances_mm, angles_deg):
+            - distances_mm: odległości w milimetrach
+            - angles_deg: kąty w stopniach [0, 360)
+    
+    Wyjątki:
+        ValueError: Gdy pakiet ma nieprawidłową strukturę.
+    
+    Hierarchia wywołań:
+        lidar_driver.py -> get_next_scan() -> _parse_packet()
+    """
     # Parsuje pakiet do tablic distances_mm i angles_deg
     if len(packet) < 11:
         raise ValueError(f"Za krótki pakiet: {len(packet)} B")
@@ -123,6 +206,27 @@ def _parse_packet(packet: bytes) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def get_next_scan() -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Pobiera jeden pakiet danych z LiDAR.
+    
+    Funkcja odczytuje i parsuje pojedynczy pakiet zwracając tablice
+    odległości w metrach i kątów w radianach.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        Tuple[np.ndarray, np.ndarray]: Krotka (r, theta):
+            - r: odległości w metrach
+            - theta: kąty w radianach
+    
+    Wyjątki:
+        RuntimeError: Gdy LiDAR nie został zainicjalizowany.
+    
+    Hierarchia wywołań:
+        check_lidar.py -> main() -> get_next_scan()
+        lidar_driver.py -> get_full_scan() -> get_next_scan()
+    """
     # Zwraca jeden pakiet: r [m], theta [rad]
     if _ser is None or not _ser.is_open:
         raise RuntimeError("Najpierw wywołaj init_lidar().")
@@ -137,6 +241,25 @@ def get_next_scan() -> Tuple[np.ndarray, np.ndarray]:
 
 
 def get_full_scan(num_packets: int = 30) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Łączy wiele pakietów LiDAR w jeden pełny skan 360°.
+    
+    Funkcja pobiera num_packets pakietów, łączy ich dane i sortuje
+    według kąta, tworząc pełny obraz otoczenia.
+    
+    Argumenty:
+        num_packets (int): Liczba pakietów do połączenia. Domyślnie 30.
+            Więcej pakietów = wyższa rozdzielczość kątowa.
+    
+    Zwraca:
+        Tuple[np.ndarray, np.ndarray]: Krotka (r, theta) posortowana według kąta:
+            - r: odległości w metrach
+            - theta: kąty w radianach [0, 2π)
+    
+    Hierarchia wywołań:
+        run_live.py -> main() -> get_full_scan() -> get_next_scan()
+        Live_Vis_v3.py -> record_scans() -> get_full_scan() -> get_next_scan()
+    """
     # Skleja num_packets pakietów w jeden posortowany skan
     all_r: List[float] = []
     all_theta: List[float] = []

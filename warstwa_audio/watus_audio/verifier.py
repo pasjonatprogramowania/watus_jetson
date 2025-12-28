@@ -23,6 +23,12 @@ def create_speaker_verifier():
     """
     Tworzy i zwraca instancję weryfikatora mówcy (Speaker Verification).
     Jeśli biblioteki (torch, speechbrain) nie są dostępne, zwraca wersję Noop.
+
+    Zwraca:
+        Object: Instancja _SbVerifier lub _NoopVerifier.
+
+    Hierarchia wywołań:
+        watus_main.py -> main() -> create_speaker_verifier()
     """
     if not config.SPEAKER_VERIFY: return _NoopVerifier()
     try:
@@ -56,7 +62,12 @@ def create_speaker_verifier():
             return self._enrolled_embedding_vector is not None
 
         def _ensure_model_loaded(self):
-            """Ładuje model SpeechBrain jeśli nie jest jeszcze załadowany."""
+            """
+            Ładuje model SpeechBrain jeśli nie jest jeszcze załadowany.
+            
+            Hierarchia wywołań:
+                verifier.py -> _compute_embedding() -> _ensure_model_loaded()
+            """
             from speechbrain.pretrained import EncoderClassifier
             if self._speaker_encoder_classifier is None:
                 self._speaker_encoder_classifier = EncoderClassifier.from_hparams(
@@ -67,7 +78,19 @@ def create_speaker_verifier():
 
         @staticmethod
         def _resample_to_16k(audio_samples: np.ndarray, sample_rate_hz: int) -> np.ndarray:
-            """Konwertuje próbki audio do 16kHz (wymagane przez model)."""
+            """
+            Konwertuje próbki audio do 16kHz (wymagane przez model).
+            
+            Argumenty:
+                audio_samples (np.ndarray): Próbki audio.
+                sample_rate_hz (int): Oryginalna częstotliwość próbkowania.
+                
+            Zwraca:
+                np.ndarray: Próbki audio 16kHz.
+                
+            Hierarchia wywołań:
+                verifier.py -> _compute_embedding() -> _resample_to_16k()
+            """
             if sample_rate_hz == 16000: return audio_samples.astype(np.float32)
             ratio = 16000.0 / sample_rate_hz
             num_output_samples = int(round(len(audio_samples) * ratio))
@@ -76,7 +99,20 @@ def create_speaker_verifier():
             return np.interp(output_indices, input_indices, audio_samples).astype(np.float32)
 
         def _compute_embedding(self, audio_samples: np.ndarray, sample_rate_hz: int):
-            """Oblicza wektor cech (embedding) dla podanych próbek audio."""
+            """
+            Oblicza wektor cech (embedding) dla podanych próbek audio.
+            
+            Argumenty:
+                audio_samples (np.ndarray): Próbki audio.
+                sample_rate_hz (int): Częstotliwość próbkowania.
+                
+            Zwraca:
+                np.ndarray: Wektor embeddingu.
+                
+            Hierarchia wywołań:
+                verifier.py -> enroll_voice_samples() -> _compute_embedding()
+                verifier.py -> verify_speaker_identity() -> _compute_embedding()
+            """
             import torch
             self._ensure_model_loaded()
             wav_resampled = self._resample_to_16k(audio_samples, sample_rate_hz)
@@ -92,6 +128,9 @@ def create_speaker_verifier():
             Argumenty:
                 audio_samples (np.ndarray): Próbki audio (float32).
                 sample_rate_hz (int): Częstotliwość próbkowania.
+                
+            Hierarchia wywołań:
+                watus_main.py -> main() -> enroll_voice_samples() (via command "enroll")
             """
             try:
                 embedding_vector = self._compute_embedding(audio_samples, sample_rate_hz)
@@ -112,6 +151,9 @@ def create_speaker_verifier():
                 
             Zwraca:
                 dict: Wynik weryfikacji (score, is_leader).
+                
+            Hierarchia wywołań:
+                stt.py -> SpeechToTextProcessingEngine._process_recorded_speech_segment() -> verify_speaker_identity()
             """
             if self._enrolled_embedding_vector is None:
                 return {"enabled": True, "enrolled": False}

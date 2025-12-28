@@ -16,7 +16,18 @@ subscriber_socket = None
 publisher_socket = None
 
 def setup_zmq_sockets():
-    """Inicjalizuje gniazda ZMQ dla Reportera."""
+    """
+    Inicjalizuje gniazda ZMQ dla Reportera.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - run_reporter.py -> reporter_main() -> main() -> setup_zmq_sockets()
+    """
     global subscriber_socket, publisher_socket
     subscriber_socket = zmq_context.socket(zmq.SUB)
     subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "dialog.leader")
@@ -35,7 +46,18 @@ _scenario_lock = threading.Lock()
 _active_scenario_id = "default"
 
 def _read_active_scenario_from_file(path: str) -> str:
-    """Czyta ID aktywnego scenariusza z pliku."""
+    """
+    Czyta ID aktywnego scenariusza z pliku.
+    
+    Argumenty:
+        path (str): Ścieżka do pliku z aktywnym scenariuszem.
+    
+    Zwraca:
+        str: ID aktywnego scenariusza lub domyślna wartość.
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> start_scenario_watch_loop() -> _read_active_scenario_from_file()
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             last_line = None
@@ -52,6 +74,16 @@ def _read_active_scenario_from_file(path: str) -> str:
 def start_scenario_watch_loop(path: str, poll_interval_seconds: float = 1.0):
     """
     Monitoruje plik scenariusza i aktualizuje stan w razie zmian.
+    
+    Argumenty:
+        path (str): Ścieżka do pliku z aktywnym scenariuszem.
+        poll_interval_seconds (float): Interwał sprawdzania pliku w sekundach (domyślnie 1.0).
+    
+    Zwraca:
+        None (pętla nieskończona)
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> main() -> threading.Thread(target=start_scenario_watch_loop) -> start_scenario_watch_loop()
     """
     global _active_scenario_id
     previous_scenario_id = None
@@ -65,7 +97,19 @@ def start_scenario_watch_loop(path: str, poll_interval_seconds: float = 1.0):
         time.sleep(poll_interval_seconds)
 
 def get_active_scenario_id() -> str:
-    """Zwraca ID aktualnie aktywnego scenariusza."""
+    """
+    Zwraca ID aktualnie aktywnego scenariusza.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        str: ID aktywnego scenariusza.
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> health_check_endpoint() -> get_active_scenario_id()
+        - reporter_main.py -> build_report_payload() -> get_active_scenario_id()
+    """
     with _scenario_lock:
         return _active_scenario_id
 
@@ -79,7 +123,18 @@ def _on_startup():
 
 @app.get("/health")
 def health_check_endpoint():
-    """Endpoint sprawdzający stan zdrowia usługi."""
+    """
+    Endpoint sprawdzający stan zdrowia usługi.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        dict: Słownik z informacjami o stanie usługi (ok, ts, llm_url, scenario, camera_tail_active).
+    
+    Hierarchia wywołań:
+        - FastAPI HTTP GET /health -> health_check_endpoint()
+    """
     return {
         "ok": True,
         "ts": time.time(),
@@ -93,7 +148,18 @@ _seen_turn_ids: Set[int] = set()
 _SEEN_LIMIT = 10000
 
 def _is_duplicate_turn(dialog_turn_identifiers) -> bool:
-    """Sprawdza, czy dana tura była już przetwarzana (deduplikacja)."""
+    """
+    Sprawdza, czy dana tura była już przetwarzana (deduplikacja).
+    
+    Argumenty:
+        dialog_turn_identifiers (list): Lista identyfikatorów tur dialogu.
+    
+    Zwraca:
+        bool: True jeśli tura była już przetwarzana, False w przeciwnym razie.
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> start_main_loop() -> _is_duplicate_turn()
+    """
     if not dialog_turn_identifiers: return False
     try: turn_id = int(dialog_turn_identifiers[0])
     except Exception: return False
@@ -109,6 +175,16 @@ def _is_duplicate_turn(dialog_turn_identifiers) -> bool:
 def build_report_payload(received_message_payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Buduje pełny obiekt meldunku (raportu) zawierający dane audio, wideo i kontekst.
+    
+    Argumenty:
+        received_message_payload (Dict[str, Any]): Payload odebranej wiadomości ZMQ z danymi dialogu.
+    
+    Zwraca:
+        Dict[str, Any]: Pełny obiekt meldunku zawierający ts_system, scenario, camera, question_text,
+                        opis, dialog_meta i vision.
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> start_main_loop() -> build_report_payload()
     """
     question_text = (received_message_payload.get("text_full") or "").strip()
     session_id = received_message_payload.get("session_id")
@@ -167,7 +243,18 @@ def build_report_payload(received_message_payload: Dict[str, Any]) -> Dict[str, 
     return report_payload_object
 
 def print_report_summary(report_payload_object: Dict[str, Any]):
-    """Wypisuje skrót raportu na konsolę."""
+    """
+    Wypisuje skrót raportu na konsolę.
+    
+    Argumenty:
+        report_payload_object (Dict[str, Any]): Obiekt meldunku do wypisania.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> start_main_loop() -> print_report_summary()
+    """
     print(
         "\n[Reporter][MELDUNEK]"
         f"\n- ts_system : {report_payload_object['ts_system']:.3f}"
@@ -179,7 +266,18 @@ def print_report_summary(report_payload_object: Dict[str, Any]):
 
 # ===== Pętla główna =====
 def start_main_loop():
-    """Główna pętla przetwarzania wiadomości ZMQ."""
+    """
+    Główna pętla przetwarzania wiadomości ZMQ.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None (pętla nieskończona)
+    
+    Hierarchia wywołań:
+        - reporter_main.py -> main() -> threading.Thread(target=start_main_loop) -> start_main_loop()
+    """
     time.sleep(0.2)
     while True:
         try:
@@ -242,7 +340,19 @@ def start_main_loop():
             time.sleep(0.15)
 
 def main():
-    """Funkcja startowa procesu Reporter."""
+    """
+    Funkcja startowa procesu Reporter.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        - run_reporter.py -> reporter_main() -> main()
+        - warstwa_audio.watus_audio.__init__.py (eksport jako reporter_main)
+    """
     setup_zmq_sockets()
     if config.CAMERA_JSONL:
         threading.Thread(target=start_camera_tail_loop, args=(config.CAMERA_JSONL,), daemon=True).start()

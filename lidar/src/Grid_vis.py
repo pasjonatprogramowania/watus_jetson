@@ -23,11 +23,22 @@ from .config import MAP_WIDTH_M, MAP_HEIGHT_M, CELL_SIZE_M
 
 def load_grid_frames(session_dir: Path) -> List[Dict[str, Any]]:
     """
-    Ładuje wszystkie grid.json z sesji:
-    session_dir/scan_00000/grid.json
-    session_dir/scan_00001/grid.json
-    ...
-    Zwraca listę obiektów dict (w kolejności po scan_xxxxx).
+    Ładuje wszystkie pliki grid.json z katalogu sesji LiDAR.
+    
+    Funkcja przeszukuje katalog sesji w poszukiwaniu podkatalogów scan_XXXXX,
+    a następnie wczytuje z każdego plik grid.json zawierający dane siatki zajętości.
+    Pliki są sortowane według nazwy skan (rosnąco).
+    
+    Argumenty:
+        session_dir (Path): Ścieżka do katalogu sesji LiDAR zawierającego
+            podkatalogi scan_00000, scan_00001, itd.
+    
+    Zwraca:
+        List[Dict[str, Any]]: Lista słowników z danymi grid.json, posortowana
+            chronologicznie według numeru skanu.
+    
+    Hierarchia wywołań:
+        Grid_vis.py -> play_session() -> load_grid_frames()
     """
     frames: List[Dict[str, Any]] = []
 
@@ -54,13 +65,27 @@ def grid_to_rgb(
     cell_danger: np.ndarray,
 ) -> np.ndarray:
     """
-    Zamienia cell_type + cell_danger na obraz RGB [0..1].
-    Konwencja:
-      - UNKNOWN        -> ciemnoszary
-      - FREE           -> jasnoszary
-      - STATIC_OBSTACLE -> czarny
-      - HUMAN          -> czerwony
-      - DANGER         -> nałożona żółta "poświata"
+    Konwertuje tablice typów komórek i zagrożeń na obraz RGB.
+    
+    Funkcja mapuje wartości enum CellType i CellDanger na kolory RGB.
+    Stosowana konwencja kolorów:
+      - UNKNOWN        -> ciemnoszary (0.2, 0.2, 0.2)
+      - FREE           -> jasnoszary (0.85, 0.85, 0.85)
+      - STATIC_OBSTACLE -> czarny (0, 0, 0)
+      - HUMAN          -> czerwony (1, 0, 0)
+      - DANGER         -> żółta poświata nakładana na bazowy kolor
+    
+    Argumenty:
+        cell_type (np.ndarray): Tablica 2D z wartościami CellType określającymi
+            typ każdej komórki siatki (UNKNOWN, FREE, STATIC_OBSTACLE, HUMAN).
+        cell_danger (np.ndarray): Tablica 2D z wartościami CellDanger określającymi
+            poziom zagrożenia dla każdej komórki.
+    
+    Zwraca:
+        np.ndarray: Tablica 3D o wymiarach (H, W, 3) z wartościami RGB w zakresie [0, 1].
+    
+    Hierarchia wywołań:
+        Grid_vis.py -> play_session() -> draw_grid_frame() -> grid_to_rgb()
     """
     h, w = cell_type.shape
     img = np.zeros((h, w, 3), dtype=float)
@@ -98,7 +123,24 @@ def draw_grid_frame(
     frame: Dict[str, Any],
 ):
     """
-    Rysuje jedną klatkę occupancy grid na zadanej osi matplotlib.
+    Rysuje pojedynczą klatkę siatki zajętości (occupancy grid) na osi matplotlib.
+    
+    Funkcja konwertuje dane JSON na obraz, konfiguruje osie w układzie XY (metry),
+    dodaje tytuł z numerem skanu i czasem, oraz zaznacza pozycję robota w (0,0).
+    
+    Argumenty:
+        ax (plt.Axes): Obiekt osi matplotlib do rysowania.
+        frame (Dict[str, Any]): Słownik z danymi klatki zawierający klucze:
+            - cell_type: tablica 2D typów komórek
+            - cell_danger: tablica 2D poziomów zagrożenia
+            - map_width_m, map_height_m: wymiary mapy w metrach
+            - scan_id, timestamp: identyfikatory klatki
+    
+    Zwraca:
+        None: Funkcja modyfikuje przekazany obiekt ax in-place.
+    
+    Hierarchia wywołań:
+        Grid_vis.py -> play_session() -> draw_grid_frame()
     """
     cell_type = np.array(frame["cell_type"], dtype=np.int8)
     cell_danger = np.array(frame["cell_danger"], dtype=np.int8)
@@ -158,6 +200,25 @@ def play_session(
     gif_path: Path | None = None,
     fps: int = 10,
 ):
+    """
+    Odtwarza animację sesji LiDAR i opcjonalnie zapisuje jako GIF.
+    
+    Funkcja ładuje wszystkie klatki grid.json z sesji, wyświetla je sekwencyjnie
+    jako animację matplotlib, a opcjonalnie zapisuje do pliku GIF.
+    
+    Argumenty:
+        session_dir (Path): Ścieżka do katalogu sesji zawierającego podkatalogi scan_XXXXX.
+        save_gif (bool): Czy zapisać animację jako GIF. Domyślnie False.
+        gif_path (Path | None): Ścieżka do pliku GIF. Jeśli None i save_gif=True,
+            tworzy plik occupancy_grid.gif w katalogu sesji.
+        fps (int): Liczba klatek na sekundę w GIF. Domyślnie 10.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        Grid_vis.py -> main() -> play_session() -> load_grid_frames(), draw_grid_frame()
+    """
     frames = load_grid_frames(session_dir)
     if not frames:
         print("Brak plików grid.json w tej sesji.")
@@ -197,6 +258,26 @@ def play_session(
 # ========== CLI ==========
 
 def main() -> None:
+    """
+    Główna funkcja CLI do wizualizacji siatki zajętości LiDAR.
+    
+    Parsuje argumenty wiersza poleceń i uruchamia odtwarzanie sesji.
+    Obsługuje argumenty:
+      - session_dir: wymagana ścieżka do folderu sesji
+      - --gif: opcjonalny flag do zapisu animacji jako GIF
+      - --fps: liczba klatek na sekundę w GIF (domyślnie 10)
+    
+    Argumenty:
+        Brak (argumenty pobierane z wiersza poleceń)
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        __main__ -> main() -> play_session()
+        run_vis.py -> main()
+        create_gif.py -> main()
+    """
     parser = argparse.ArgumentParser(
         description="Offline wizualizacja occupancy_grid (grid.json) z jednej sesji."
     )

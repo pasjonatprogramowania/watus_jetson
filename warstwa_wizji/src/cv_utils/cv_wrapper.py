@@ -6,6 +6,21 @@ from ultralytics import YOLO
 
 
 class CVWrapper:
+    """
+    Wrapper na model detekcji obiektów (YOLO/RT-DETR) z biblioteki Ultralytics.
+    
+    Zapewnia interfejs do inicjalizacji modelu i wykonywania detekcji/śledzenia na klatkach BGR.
+    
+    Atrybuty:
+        device (str): Urządzenie obliczeniowe ('cuda' lub 'cpu').
+        model (YOLO): Załadowany model Ultralytics.
+        score_thresh (float): Próg pewności detekcji (confidence threshold).
+        imgsz (int): Rozmiar wejściowy obrazu dla modelu.
+        class_names (dict): Słownik mapujący ID klasy na nazwę.
+        
+    Hierarchia wywołań:
+        warstwa_wizji/main.py -> CVAgent.__init__() -> CVWrapper()
+    """
     def __init__(
         self,
         weights: str = "rtdetr-l.pt",
@@ -14,6 +29,8 @@ class CVWrapper:
         imgsz: int = 640
     ):
         """
+        Inicjalizuje wrapper CV.
+        
         weights: ścieżka lub nazwa wagi Ultralytics (np. 'rtdetr-l.pt', 'rtdetr-x.pt', 'rtdetr-r18.pt')
         score_thresh: minimalny confidence
         imgsz: rozmiar przeskalowania wejścia (kwadrat)
@@ -27,13 +44,35 @@ class CVWrapper:
         self.class_names = self.model.names  # dict {idx: name}
 
     def detect(self, frame_bgr):
+        """
+        Wykonuje detekcję na klatce (alias dla __call__).
+        
+        Argumenty:
+            frame_bgr (np.ndarray): Klatka obrazu w formacie BGR.
+            
+        Zwraca:
+            List[Dict]: Lista wykrytych obiektów.
+            
+        Hierarchia wywołań:
+            warstwa_wizji/main.py -> CVAgent.process_camera() -> detect() -> __call__()
+        """
         return self.__call__(frame_bgr)
 
     @torch.inference_mode()
     def __call__(self, frame_bgr: np.ndarray) -> List[Dict]:
         """
-        frame_bgr: numpy.ndarray (H,W,3) w BGR (OpenCV). Ultralytics sam ogarnia konwersję.
-        Zwraca: listę słowników {bbox:[x1,y1,x2,y2], score:float, label:int}
+        Wykonuje detekcję i śledzenie (track) na zadanej klatce.
+        
+        Używa modelu YOLO/RT-DETR w trybie `track(persist=True)`.
+        
+        Argumenty:
+            frame_bgr: numpy.ndarray (H,W,3) w BGR (OpenCV). Ultralytics sam ogarnia konwersję.
+            
+        Zwraca:
+            listę słowników {bbox:[x1,y1,x2,y2], score:float, label:int}
+            
+        Hierarchia wywołań:
+            cv_wrapper.py -> CVWrapper.detect() -> __call__()
         """
         # Stream-off + pojedyncza klatka => results to lista długości 1
         # results = self.model.predict(

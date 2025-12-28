@@ -41,7 +41,21 @@ MOVING_DET_MAX_R = 3.5   # m
 
 
 def beams_to_xy(beams: List[BeamResult]) -> Tuple[List[float], List[float]]:
-    # BeamResult -> listy x,y (pomija wiązki NONE)
+    """
+    Konwertuje listę wyników wiązek LiDAR na współrzędne kartezjańskie.
+    
+    Funkcja przekształca współrzędne biegunowe (r, theta) na kartezjańskie (x, y),
+    pomijając wiązki bez kategorii (NONE).
+    
+    Argumenty:
+        beams (List[BeamResult]): Lista obiektów BeamResult z polami r, theta, category.
+    
+    Zwraca:
+        Tuple[List[float], List[float]]: Krotka (xs, ys) z listami współrzędnych X i Y.
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> record_scans() -> beams_to_xy()
+    """
     xs: List[float] = []
     ys: List[float] = []
     for b in beams:
@@ -55,7 +69,22 @@ def beams_to_xy(beams: List[BeamResult]) -> Tuple[List[float], List[float]]:
 
 
 def setup_radar_axis(ax, max_range: float) -> None:
-    # konfiguracja osi radarowej + strefa ruchu + subtelny wskaźnik kierunków
+    """
+    Konfiguruje osie wykresu radarowego dla wizualizacji LiDAR.
+    
+    Funkcja ustawia styl "radarowy" z ciemnym tłem, okręgami zasięgu,
+    strefą detekcji ruchu, wskaźnikiem kierunku robota i pozycją LiDAR w centrum.
+    
+    Argumenty:
+        ax (plt.Axes): Obiekt osi matplotlib do konfiguracji.
+        max_range (float): Maksymalny zasięg w metrach do wyświetlenia.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> render_frames_to_png() -> setup_radar_axis()
+    """
     ax.clear()
     ax.set_title("LIDAR", color="white")
     ax.set_xlabel("X [m]", color="white")
@@ -171,7 +200,24 @@ def setup_radar_axis(ax, max_range: float) -> None:
 
 
 def record_scans() -> List[Dict[str, Any]]:
-    # nagrywa N_SCANS skanów do pamięci (z prędkościami)
+    """
+    Nagrywa serię skanów LiDAR do pamięci.
+    
+    Funkcja inicjalizuje LiDAR, tworzy system przetwarzania i zbiera N_SCANS skanów.
+    Każdy skan zawiera przetworzone wiązki (xs, ys) oraz informacje o śledzonych
+    obiektach (tracks) z pozycjami, prędkościami i ID.
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        List[Dict[str, Any]]: Lista klatek, każda zawiera klucze:
+            - xs, ys: listy współrzędnych punktów
+            - tracks: lista słowników z danymi śledzonych obiektów
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> main() -> record_scans() -> beams_to_xy()
+    """
     print(f"Próbuję otworzyć lidar na porcie: {LIDAR_PORT}")
     init_lidar(port=LIDAR_PORT, baudrate=LIDAR_BAUDRATE,
                timeout=LIDAR_TIMEOUT)
@@ -226,7 +272,21 @@ def record_scans() -> List[Dict[str, Any]]:
 
 
 def ensure_empty_dir(path: Path) -> None:
-    # tworzy pusty katalog (usuwa jego zawartość jeśli istnieje)
+    """
+    Tworzy pusty katalog lub czyści istniejący.
+    
+    Jeśli katalog istnieje, usuwa wszystkie jego pliki i podkatalogi.
+    Jeśli nie istnieje, tworzy go wraz z katalogami nadrzędnymi.
+    
+    Argumenty:
+        path (Path): Ścieżka do katalogu do utworzenia/wyczyszczenia.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> render_frames_to_png() -> ensure_empty_dir()
+    """
     if path.exists():
         for p in path.iterdir():
             if p.is_file():
@@ -241,7 +301,25 @@ def ensure_empty_dir(path: Path) -> None:
 
 
 def render_frames_to_png(frames: List[Dict[str, Any]], frame_dir: Path) -> List[Path]:
-    # zapisuje każdy frame jako PNG i zwraca listę ścieżek
+    """
+    Renderuje wszystkie klatki LiDAR do plików PNG.
+    
+    Funkcja tworzy wizualizację każdej klatki z danymi skanów i śledzeniem obiektów:
+      - punkty wiązek jako białe kropki
+      - ślady i pozycje śledzonych obiektów z kolorami per ID
+      - strzałki predykcji ruchu
+      - legendę z ID, prędkością i odległością
+    
+    Argumenty:
+        frames (List[Dict[str, Any]]): Lista klatek z record_scans().
+        frame_dir (Path): Katalog na pliki PNG.
+    
+    Zwraca:
+        List[Path]: Lista ścieżek do utworzonych plików PNG.
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> main() -> render_frames_to_png() -> setup_radar_axis(), ensure_empty_dir()
+    """
     ensure_empty_dir(frame_dir)
 
     max_range = min(R_MAX_M, MAP_WIDTH_M / 2.0, MAP_HEIGHT_M / 2.0)
@@ -413,7 +491,22 @@ def render_frames_to_png(frames: List[Dict[str, Any]], frame_dir: Path) -> List[
 
 
 def make_gif_from_pngs(frame_paths: List[Path], output_path: Path) -> None:
-    # tworzy GIF z listy plików PNG
+    """
+    Tworzy animowany GIF z listy plików PNG.
+    
+    Funkcja wczytuje wszystkie obrazy PNG i zapisuje je jako animowany GIF
+    z prędkością określoną przez stałą GIF_FPS.
+    
+    Argumenty:
+        frame_paths (List[Path]): Lista ścieżek do plików PNG w kolejności animacji.
+        output_path (Path): Ścieżka do wynikowego pliku GIF.
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        Live_Vis_v3.py -> main() -> make_gif_from_pngs()
+    """
     print(f"Tworzę GIF: {output_path}")
     images = []
     for p in frame_paths:
@@ -423,6 +516,25 @@ def make_gif_from_pngs(frame_paths: List[Path], output_path: Path) -> None:
 
 
 def main() -> None:
+    """
+    Główna funkcja offline wizualizacji LiDAR.
+    
+    Orkiestruje cały proces:
+      1. Nagrywanie skanów z LiDAR (record_scans)
+      2. Renderowanie klatek do PNG (render_frames_to_png)
+      3. Tworzenie animowanego GIF (make_gif_from_pngs)
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        create_gif.py -> main()
+        run_vis.py -> main()
+        __main__ -> main() -> record_scans(), render_frames_to_png(), make_gif_from_pngs()
+    """
     frames = record_scans()
 
     frame_dir = Path(FRAME_DIR)

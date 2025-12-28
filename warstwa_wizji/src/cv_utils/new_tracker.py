@@ -8,6 +8,9 @@ import torch
 
 # ========== 0) Konfiguracja domyślna ==========
 class Cfg:
+    """
+    Konfiguracja parametrów trackera i detektora.
+    """
     # RT-DETR
     weights       = "rtdetr-l.pt"   # rtdetr-r18.pt (szybki) / rtdetr-l.pt / rtdetr-x.pt
     imgsz         = 640          # większe -> lepsze dla małych obiektów (GPU!)
@@ -39,8 +42,17 @@ class Cfg:
 
 # ========== 1) RT-DETR wrapper (Ultralytics) ==========
 class RTDetrWrapper:
+    """
+    Wrapper na model RT-DETR (lub YOLO) z Ultralytics.
+    
+    Hierarchia wywołań:
+        new_tracker.py -> demo() -> RTDetrWrapper()
+    """
     def __init__(self, weights=Cfg.weights, score_thresh=Cfg.conf_det, device: Optional[str]=None,
                  imgsz=Cfg.imgsz, iou_nms=Cfg.iou_nms, max_det=Cfg.max_det):
+        """
+        Inicjalizacja wrappera.
+        """
         from ultralytics import YOLO
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = YOLO(weights)
@@ -115,8 +127,13 @@ def nms_per_class(dets, iou_thr=0.5):
 # ========== 3) Kalman Box (SORT-style) ==========
 class KalmanBox:
     """
+    Filtr Kalmana dla pojedynczego obiektu (bounding box).
+    
     Stan: x = [cx, cy, s, r, vx, vy, vs]^T
     Pomiar: z = [cx, cy, s, r]
+    
+    Hierarchia wywołań:
+        new_tracker.py -> KalmanHungarianTracker.step() -> KalmanBox()
     """
     def __init__(self, init_bbox_xyxy: List[float], dt: float=1.0):
         self.dt = dt
@@ -186,6 +203,9 @@ def cosine_dist(a: np.ndarray, b: np.ndarray) -> float:
 # ========== 5) Tracker ==========
 @dataclass
 class Track:
+    """
+    Reprezentacja pojedynczego śledzonego obiektu.
+    """
     track_id: int
     label: int
     score: float
@@ -219,6 +239,14 @@ def try_linear_assignment(cost: np.ndarray) -> np.ndarray:
         return np.array(matches, dtype=int)
 
 class KalmanHungarianTracker:
+    """
+    Tracker wieloobiektowy wykorzystujący Filtr Kalmana i algorytm węgierski (Hungarian Algorithm).
+    
+    Integruje informacje o położeniu (IoU, Mahalanobis) oraz wyglądzie (Histogram HSV).
+    
+    Hierarchia wywołań:
+        new_tracker.py -> demo() -> KalmanHungarianTracker()
+    """
     def __init__(self,
                  iou_gate=Cfg.iou_gate,
                  mhal_gate=Cfg.mhal_gate,
@@ -277,6 +305,25 @@ class KalmanHungarianTracker:
         self.tracks = keep
 
     def step(self, frame: np.ndarray, dets: List[Dict]) -> List[Dict]:
+        """
+        Wykonuje jeden krok trackera na nowej klatce.
+        
+        1. Predykcja stanu (Kalman).
+        2. Dopasowanie nowych detekcji do istniejących torów (Hungarian).
+        3. Aktualizacja stanu dopasowanych torów.
+        4. Utworzenie nowych torów dla niedopasowanych detekcji.
+        5. Usuwanie martwych torów.
+        
+        Argumenty:
+            frame (np.ndarray): Klatka obrazu.
+            dets (List[Dict]): Lista detekcji z modelu.
+            
+        Zwraca:
+            List[Dict]: Lista aktywnych, potwierdzonych ścieżek.
+            
+        Hierarchia wywołań:
+            new_tracker.py -> demo() -> step()
+        """
         H, W = frame.shape[:2]
         # 1) Predykcja
         for t in self.tracks:

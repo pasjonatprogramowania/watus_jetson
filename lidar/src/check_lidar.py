@@ -3,6 +3,23 @@ from src.config import LIDAR_PORT
 
 
 def main():
+    """
+    Testuje połączenie z LiDAR i odczytuje jeden skan.
+    
+    Funkcja diagnostyczna sprawdzająca:
+      1. Czy port szeregowy można otworzyć
+      2. Czy LiDAR przesyła poprawne dane
+    Wyświetla odczytane wartości r (odległość) i theta (kąt).
+    
+    Argumenty:
+        Brak
+    
+    Zwraca:
+        None
+    
+    Hierarchia wywołań:
+        __main__ -> main() -> init_lidar(), get_next_scan()
+    """
     print(f"Próbuję otworzyć port: {LIDAR_PORT}")
     try:
         init_lidar(port=LIDAR_PORT)

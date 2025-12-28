@@ -11,7 +11,18 @@ _camera_last_state: Dict[str, Any] = {"ts": 0.0, "record": None}
 _camera_buffer: deque[Dict[str, Any]] = deque()
 
 def _summarize_single_frame(camera_frame_object: Dict[str, Any]) -> str:
-    """Tworzy krótki opis tekstowy pojedynczej klatki z kamery."""
+    """
+    Tworzy krótki opis tekstowy pojedynczej klatki z kamery.
+    
+    Argumenty:
+        camera_frame_object (dict): Obiekt JSON z danymi klatki (obiekty, jasność itp.).
+        
+    Zwraca:
+        str: Tekstowy opis (np. "person(90%), cup(80%) | bright=0.5").
+        
+    Hierarchia wywołań:
+        reporter_camera.py -> get_current_camera_summary() -> _summarize_single_frame()
+    """
     detected_items_list = camera_frame_object.get("objects") or camera_frame_object.get("detections") or []
     if not detected_items_list:
         brightness_value = camera_frame_object.get("brightness")
@@ -29,7 +40,20 @@ def _summarize_single_frame(camera_frame_object: Dict[str, Any]) -> str:
     return f"{', '.join(top_items)} {extra_items_str}{brightness_string}".strip()
 
 def _summarize_time_window(frame_buffer: deque) -> Dict[str, Any]:
-    """Tworzy podsumowanie statystyczne z bufora klatek (okno czasowe)."""
+    """
+    Tworzy podsumowanie statystyczne z bufora klatek (okno czasowe).
+    
+    Oblicza najczęstsze obiekty i średnią jasność w ostatnich N sekundach.
+    
+    Argumenty:
+        frame_buffer (deque): Bufor klatek.
+        
+    Zwraca:
+        dict: Podsumowanie (top_objects, avg_brightness).
+        
+    Hierarchia wywołań:
+        reporter_camera.py -> get_current_camera_summary() -> _summarize_time_window()
+    """
     # liczymy najczęstsze obiekty oraz średnią jasność
     object_counts = Counter()
     brightness_sum = 0.0
@@ -63,6 +87,12 @@ def start_camera_tail_loop(file_path: str):
     """
     Uruchamia pętlę śledzenia pliku JSONL z danymi z kamery (tail).
     Aktualizuje globalny stan kamery.
+    
+    Argumenty:
+        file_path (str): Ścieżka do pliku JSONL.
+        
+    Hierarchia wywołań:
+        reporter_main.py -> main() -> start_camera_tail_loop() (w osobnym wątku)
     """
     if not file_path:
         return
@@ -92,6 +122,12 @@ def start_camera_tail_loop(file_path: str):
 def get_current_camera_summary():
     """
     Zwraca aktualny stan kamery: ostatnią klatkę, jej opis i podsumowanie okna czasowego.
+    
+    Zwraca:
+        tuple: (last_record, last_summary_text, time_window_summary)
+        
+    Hierarchia wywołań:
+        reporter_llm.py -> generate_report() -> get_current_camera_summary()
     """
     with _camera_lock:
         last_record = _camera_last_state.get("record")

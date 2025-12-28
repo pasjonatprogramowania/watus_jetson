@@ -5,6 +5,9 @@ from . import config
 def print_available_audio_devices():
     """
     Wypisuje listę dostępnych urządzeń audio do logów.
+    
+    Hierarchia wywołań:
+        watus_main.py -> main() -> print_available_audio_devices()
     """
     try:
         devs = sd.query_devices()
@@ -95,6 +98,9 @@ def get_default_input_device_index():
     """
     Zwraca indeks wybranego urządzenia wejściowego (mikrofonu).
     Bierze pod uwagę konfigurację lub wybiera automatycznie.
+    
+    Hierarchia wywołań:
+        watus_main.py -> main() -> get_default_input_device_index()
     """
     return _resolve_device_identifier(config.IN_DEV_ENV, want_output=False) or _auto_select_default_input_device()
 
@@ -102,5 +108,8 @@ def get_default_output_device_index():
     """
     Zwraca indeks wybranego urządzenia wyjściowego (głośników).
     Bierze pod uwagę konfigurację lub wybiera automatycznie.
+    
+    Hierarchia wywołań:
+        watus_main.py -> main() -> get_default_output_device_index()
     """
     return _resolve_device_identifier(config.OUT_DEV_ENV, want_output=True) or _auto_select_default_output_device()

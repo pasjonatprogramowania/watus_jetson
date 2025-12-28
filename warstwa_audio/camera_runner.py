@@ -59,7 +59,16 @@ except Exception as e:
 
 
 class YoloDetector:
+    """
+    Wrapper na detektor YOLO (Ultralytics).
+    
+    Hierarchia wywołań:
+        camera_runner.py -> RTDetrDetector.__init__() -> YoloDetector() (jako fallback)
+    """
     def __init__(self, score_thr: float, model_path: Optional[str] = None):
+        """
+        Inicjalizuje detektor YOLO.
+        """
         self.score_thr = float(score_thr)
         if model_path is None:
             # próbuj lokalny plik, inaczej pobierze automatycznie
@@ -69,6 +78,18 @@ class YoloDetector:
         self.model = YOLO(model_path)
 
     def detect(self, frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
+        """
+        Wykrywa obiekty na klatce (YOLO).
+        
+        Argumenty:
+            frame_bgr (np.ndarray): Klatka BGR.
+            
+        Zwraca:
+            list: Lista słowników z detekcjami.
+            
+        Hierarchia wywołań:
+            camera_runner.py -> RTDetrDetector.detect() -> YoloDetector.detect() (fallback)
+        """
         res = self.model.predict(source=frame_bgr, verbose=False)[0]
         out: List[Dict[str, Any]] = []
         names = res.names or {}
@@ -87,13 +108,20 @@ class YoloDetector:
 # ========= RT-DETR (opcjonalnie) =========
 class RTDetrDetector:
     """
+    Wrapper na detektor RT-DETR z obsługą fallbacku do YOLO.
+    
     Wersja „Opcja A”:
       - dodajemy rodzica 'src' do sys.path
       - importujemy from src.rtdetr import RTDetrWrapper
       - miękki fallback na YOLO
-
+      
+    Hierarchia wywołań:
+        camera_runner.py -> main() -> RTDetrDetector() (nieużywane w obecnym kodzie main, ale przygotowane)
     """
     def __init__(self, weights: str, score_thr: float):
+        """
+        Inicjalizuje RT-DETR.
+        """
         import os as _os, sys as _sys
         _sys.path.insert(0, _os.path.abspath(DEF_RTD_DIR))
         self._fallback = YoloDetector(score_thr=score_thr)
@@ -108,6 +136,12 @@ class RTDetrDetector:
             self.core = None
 
     def detect(self, frame_bgr: np.ndarray) -> List[Dict[str, Any]]:
+        """
+        Wykrywa obiekty (RT-DETR lub fallback YOLO).
+        
+        Hierarchia wywołań:
+            camera_runner.py -> main() -> RTDetrDetector.detect()
+        """
         if self.core is None:
             return self._fallback.detect(frame_bgr)
         try:
@@ -136,7 +170,11 @@ class RTDetrDetector:
 # ========= POMOCNICZE =========
 def open_camera(device: str | int) -> cv2.VideoCapture:
     """
+    Otwiera kamerę OpenCV.
     device może być liczbą (index) albo nazwą (wtedy i tak próbujemy index 0).
+    
+    Hierarchia wywołań:
+        camera_runner.py -> main() -> open_camera()
     """
     idx: int
     if isinstance(device, int):
@@ -153,6 +191,12 @@ def open_camera(device: str | int) -> cv2.VideoCapture:
 
 
 def write_jsonl(path: str, obj: Dict[str, Any]) -> None:
+    """
+    Dopisuje obiekt JSON do pliku (wiersz).
+    
+    Hierarchia wywołań:
+        camera_runner.py -> main() -> write_jsonl() (jako callback CVAgent)
+    """
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -162,6 +206,12 @@ def write_jsonl(path: str, obj: Dict[str, Any]) -> None:
 
 
 def brightness_of(frame_bgr: np.ndarray) -> float:
+    """
+    Liczy średnią jasność klatki (0-255).
+    
+    Hierarchia wywołań:
+        camera_runner.py -> main() -> brightness_of() (jeśli użyte manualnie, tu CVAgent to robi)
+    """
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     return float(np.mean(gray))
 
@@ -185,6 +235,13 @@ def parse_args() -> argparse.Namespace:
 
 # ========= GŁÓWNA PĘTLA =========
 def main():
+    """
+    Główna funkcja skryptu camera_runner.
+    Uruchamia CVAgent i pętlę przetwarzania wideo.
+    
+    Hierarchia wywołań:
+        camera_runner.py -> main()
+    """
     args = parse_args()
 
     # Ctrl+C -> czyste wyjście

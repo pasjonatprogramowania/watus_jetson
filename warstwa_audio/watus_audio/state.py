@@ -6,6 +6,11 @@ class SystemState:
     """
     Klasa zarządzająca stanem systemu Watus (np. czy aktualnie mówi, czy czeka na odpowiedź).
     Służy do synchronizacji wątków i blokowania nasłuchiwania w odpowiednich momentach.
+    
+    Hierarchia wywołań:
+        watus_main.py -> main() -> SystemState()
+        watus_main.py -> tts_worker_thread() -> SystemState.set_tts_active_flag()
+        stt.py -> SpeechToTextProcessingEngine -> SystemState.is_input_blocked()
     """
     
     def __init__(self):

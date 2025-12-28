@@ -22,7 +22,22 @@ from src.config import (
 
 @dataclass
 class ScanResult:
-    # Wynik przetworzenia jednego skanu
+    """
+    Wynik kompletnego przetworzenia jednego skanu LiDAR.
+    
+    Zawiera wszystkie dane wygenerowane przez pipeline przetwarzania:
+    preprocessing -> segmentacja -> aktualizacja mapy -> tracking.
+    
+    Atrybuty:
+        beams (List[BeamResult]): Wiązki z przypisanymi kategoriami.
+        segments (List[Segment]): Wykryte segmenty obiektów.
+        human_tracks (List[HumanTrack]): Aktywne ślady ludzi.
+        grid (OccupancyGrid): Zaktualizowana siatka zajętości.
+    
+    Hierarchia wywołań:
+        Zwracany przez: AiwataLidarSystem.process_scan()
+        Używany w: run_live.py, Live_Vis_v3.py
+    """
     beams: List[BeamResult]         # wiązki z kategoriami
     segments: List[Segment]         # segmenty obiektów
     human_tracks: List[HumanTrack]  # tracki ludzi
@@ -30,6 +45,19 @@ class ScanResult:
 
 
 class AiwataLidarSystem:
+    """
+    Główna klasa systemu przetwarzania LiDAR.
+    
+    Integruje wszystkie komponenty pipeline'u:
+      - Preprocessing (filtrowanie, korekcja kąta)
+      - Segmentacja (grupowanie wiązek w obiekty)
+      - Occupancy Grid (mapa zajętości 2D)
+      - Tracking (sledzenie ludzi w czasie)
+    
+    Hierarchia wywołań:
+        run_live.py -> main() -> AiwataLidarSystem.process_scan()
+        Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem.process_scan()
+    """
     # Główna klasa spinająca preprocess, segmentację, mapę i tracking
 
     def __init__(
@@ -40,6 +68,20 @@ class AiwataLidarSystem:
         max_match_distance: float = TRACK_MAX_MATCH_DISTANCE_M,
         max_missed: int = TRACK_MAX_MISSED,
     ):
+        """
+        Inicjalizuje system LiDAR z mapą i trackerem.
+        
+        Argumenty:
+            map_width_m (float): Szerokość mapy w metrach.
+            map_height_m (float): Wysokość mapy w metrach.
+            cell_size_m (float): Rozmiar komórki siatki w metrach.
+            max_match_distance (float): Maks. odległość dopasowania detekcji do tracka.
+            max_missed (int): Ile skanów track może zostać bez detekcji.
+        
+        Hierarchia wywołań:
+            run_live.py -> main() -> AiwataLidarSystem()
+            Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem()
+        """
         # inicjalizacja mapy
         self.grid = OccupancyGrid(
             width_m=map_width_m,
@@ -60,6 +102,31 @@ class AiwataLidarSystem:
         pose: Pose2D,
         t: float,
     ) -> ScanResult:
+        """
+        Przetwarza pojedynczy skan LiDAR przez pełny pipeline.
+        
+        Etapy przetwarzania:
+          1. Preprocessing - filtrowanie i klasyfikacja wiązek
+          2. Segmentacja - grupowanie wiązek w obiekty
+          3. Klasyfikacja segmentów - oznaczenie jako HUMAN/OBSTACLE
+          4. Aktualizacja mapy - ray tracing i aktualizacja siatki
+          5. Tracking - dopasowanie detekcji do istniejących tracków
+          6. Filtrowanie tracków - tylko potwierdzone śledzenia ludzi
+        
+        Argumenty:
+            r (np.ndarray): Tablica odległości w metrach.
+            theta (np.ndarray): Tablica kątów w radianach.
+            pose (Pose2D): Pozycja robota (x, y, yaw).
+            t (float): Czas skanu w sekundach.
+        
+        Zwraca:
+            ScanResult: Kompletny wynik przetwarzania.
+        
+        Hierarchia wywołań:
+            system.py -> AiwataLidarSystem.process_scan()
+                -> preprocess_scan(), segment_scan(), assign_segment_categories()
+                -> grid.update_from_scan(), tracker.update()
+        """
         # 1) preprocessing
         beams: List[BeamResult] = preprocess_scan(r, theta)
 

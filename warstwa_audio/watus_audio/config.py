@@ -20,7 +20,10 @@ PUB_ADDR = os.environ.get("ZMQ_PUB_ADDR", "tcp://127.0.0.1:7780")
 SUB_ADDR = os.environ.get("ZMQ_SUB_ADDR", "tcp://127.0.0.1:7781")
 
 # === Synteza Mowy (TTS) ===
-# Wybór dostawcy TTS: 'piper' lub 'gemini'
+# Wybór dostawcy TTS.
+# Możliwe wartości:
+#   - 'piper': Lokalny silnik, wymaga modelu ONNX.
+#   - 'gemini': Zdalny API Google Gemini.
 TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "gemini").lower()
 
 # Konfiguracja Piper TTS
@@ -40,7 +43,10 @@ XTTS_SPEAKER_WAV = os.environ.get("XTTS_SPEAKER_WAV", "models/xtts/ref.wav")
 XTTS_LANGUAGE = os.environ.get("XTTS_LANGUAGE", "pl")
 
 # === Rozpoznawanie Mowy (STT) ===
-# Wybór dostawcy STT: 'local' (Whisper) lub 'groq' (obecnie nieużywane)
+# Wybór dostawcy STT.
+# Możliwe wartości:
+#   - 'local': Lokalny model Whisper (faster-whisper).
+#   - 'groq': Zdalne API Groq (obecnie nieużywane/eksperymentalne).
 STT_PROVIDER = os.environ.get("STT_PROVIDER", "local").lower()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "whisper-large-v3")
@@ -49,6 +55,15 @@ def _normalize_fw_model(name: str) -> str:
     """
     Normalizuje nazwę modelu Faster Whisper.
     Jeśli podano krótką nazwę (np. 'small'), zamienia ją na pełną ścieżkę repozytorium.
+    
+    Argumenty:
+        name (str): Nazwa modelu.
+        
+    Zwraca:
+        str: Pełna nazwa modelu (np. 'guillaumekln/faster-whisper-small').
+        
+    Hierarchia wywołań:
+        (używana przy inicjalizacji zmiennych globalnych w config.py)
     """
     name = (name or "").strip()
     short = {"tiny", "base", "small", "medium", "large", "large-v1", "large-v2", "large-v3"}
@@ -57,8 +72,12 @@ def _normalize_fw_model(name: str) -> str:
     return name
 
 # === Konfiguracja Whisper (Uproszczona) ===
-# Odczytujemy proste zmienne konfiguracyjne
+# Rozmiar modelu Whisper.
+# Możliwe wartości: 'tiny', 'base', 'small', 'medium', 'large', 'large-v3'.
 _whisper_size = os.environ.get("WHISPER_SIZE", "medium").lower()
+
+# Typ urządzenia obliczeniowego.
+# Możliwe wartości: 'cpu', 'gpu' (zamieniane na 'cuda' w kodzie).
 _whisper_device_type = os.environ.get("WHISPER_DEVICE_TYPE", "cpu").lower()
 
 # Automatyczne ustalenie ścieżki do modelu
@@ -109,8 +128,9 @@ MAX_UTT_MS = int(os.environ.get("MAX_UTT_MS", "6500"))
 GAP_TOL_MS = int(os.environ.get("WATUS_GAP_TOL_MS", "450"))
 
 # Urządzenia audio
-IN_DEV_ENV = os.environ.get("WATUS_INPUT_DEVICE")
-OUT_DEV_ENV = os.environ.get("WATUS_OUTPUT_DEVICE")
+# ID urządzeń można sprawdzić za pomocą `python -m sounddevice`.
+IN_DEV_ENV = os.environ.get("WATUS_INPUT_DEVICE")  # ID mikrofonu
+OUT_DEV_ENV = os.environ.get("WATUS_OUTPUT_DEVICE") # ID głośników
 
 DIALOG_PATH = os.environ.get("DIALOG_PATH", "data/watus_audio/dialog.jsonl")
 
@@ -119,7 +139,9 @@ SPEAKER_VERIFY = int(os.environ.get("SPEAKER_VERIFY", "1"))
 WAKE_WORDS = [w.strip() for w in
               os.environ.get("WAKE_WORDS", "hej watusiu,hej watuszu,hej watusił,kej watusił,hej watośiu").split(",") if
               w.strip()]
+# Próg podobieństwa głosu (0.0 - 1.0). Wyższy = trudniej zaakceptować.
 SPEAKER_THRESHOLD = float(os.environ.get("SPEAKER_THRESHOLD", "0.64"))
+# Próg "lepki" - ułatwia utrzymanie identyfikacji, gdy użytkownik już raz został rozpoznany.
 SPEAKER_STICKY_THRESHOLD = float(os.environ.get("SPEAKER_STICKY_THRESHOLD", str(SPEAKER_THRESHOLD)))
 SPEAKER_GRACE = float(os.environ.get("SPEAKER_GRACE", "0.12"))
 SPEAKER_STICKY_SEC = float(os.environ.get("SPEAKER_STICKY_SEC", os.environ.get("SPEAKER_STICKY_S", "3600")))

@@ -26,6 +26,28 @@ from src.config import (
 
 @dataclass
 class HumanTrack:
+    """
+    Reprezentuje śledzony obiekt (potencjalnie człowieka) w czasie.
+    
+    Przechowuje historię pozycji, wektor prędkości oraz stan (potwierdzony/niepotwierdzony).
+    Zapewnia metody do predykcji przyszłej pozycji.
+    
+    Atrybuty:
+        id (int): Unikalny identyfikator śladu.
+        type (str): Typ obiektu (domyślnie "Human").
+        history (List[Tuple]): Historia pozycji (czas, x, y).
+        last_position (Tuple): Ostatnia znana pozycja (x, y).
+        last_update_time (float): Czas ostatniej aktualizacji.
+        missed_count (int): Liczba skanów bez dopasowania detekcji.
+        vx (float): Prędkość w osi X [m/s].
+        vy (float): Prędkość w osi Y [m/s].
+        hits_count (int): Liczba udanych aktualizacji.
+        confirmed (bool): Czy ślad jest stabilny i potwierdzony.
+    
+    Hierarchia wywołań:
+        Tworzony przez: HumanTracker._create_track()
+        Używany w: HumanTracker, system.py, Live_Vis_v3.py
+    """
     # Track śledzonej osoby w układzie świata
     id: int
     type: str = "Human"
@@ -78,6 +100,21 @@ class HumanTrack:
     # ---------- predykcja ----------
 
     def predict_position(self, t: float) -> Tuple[float, float]:
+        """
+        Przewiduje pozycję obiektu w zadanym czasie t.
+        
+        Zakłada ruch jednostajny prostoliniowy z aktualną prędkością (vx, vy).
+        
+        Argumenty:
+            t (float): Docelowy czas predykcji.
+            
+        Zwraca:
+            Tuple[float, float]: Przewidywana pozycja (x, y).
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker._find_best_match() -> HumanTrack.predict_position()
+            tracking.py -> HumanTracker._find_best_archived_match() -> HumanTrack.predict_position()
+        """
         # predykcja pozycji przy stałej prędkości w chwili t
         t = float(t)
         dt = t - float(self.last_update_time)
@@ -93,6 +130,20 @@ class HumanTrack:
         horizon_s: float = TRACK_PREDICTION_HORIZON_S,
         step_s: float = TRACK_PREDICTION_STEP_S,
     ) -> List[Tuple[float, float, float]]:
+        """
+        Generuje listę punktów przyszłej trajektorii.
+        
+        Argumenty:
+            t_start (float): Czas początkowy.
+            horizon_s (float): Horyzont czasowy predykcji w sekundach.
+            step_s (float): Krok czasowy w sekundach.
+            
+        Zwraca:
+            List[Tuple[float, float, float]]: Lista punktów (t, x, y).
+            
+        Hierarchia wywołań:
+            tracking.py -> HumanTracker.get_future_predictions() -> HumanTrack.predict_future_points()
+        """
         # krótka trajektoria w przyszłość (t, x, y) przy stałej prędkości
         t_start = float(t_start)
         horizon_s = max(0.0, float(horizon_s))
@@ -127,6 +178,17 @@ class HumanTrack:
 
 
 class HumanTracker:
+    """
+    System wieloobiektowego śledzenia (Multi-Object Tracking).
+    
+    Wykorzystuje algorytm Najbliższego Sąsiada (NN) z predykcją pozycji (model stałej prędkości)
+    oraz mechanizm re-identyfikacji obiektów po chwilowym zaniku (okluzji).
+    Obsługuje wygładzanie pozycji (alfa-beta filter) oraz zarządzanie cyklem życia śladu
+    (tworzenie, potwierdzanie, archiwizacja, usuwanie).
+    
+    Hierarchia wywołań:
+        system.py -> AiwataLidarSystem.__init__() -> HumanTracker()
+    """
     # Multi-target tracker z NN, predykcją, wygładzaniem i etapem potwierdzania
 
     def __init__(
@@ -304,6 +366,26 @@ class HumanTracker:
     # --- API trackera ---
 
     def update(self, detections: List[Tuple[float, float]], t: float) -> List[HumanTrack]:
+        """
+        Aktualizuje stan trackera na podstawie nowych detekcji.
+        
+        Główna pętla algorytmu śledzenia:
+        1. Czyszczenie archiwum ze starych śladów.
+        2. Dopasowanie detekcji do aktywnych śladów (Najbliższy Sąsiad).
+        3. Dopasowanie pozostałych detekcji do śladów w archiwum (re-id).
+        4. Utworzenie nowych śladów dla niedopasowanych detekcji.
+        5. Aktualizacja liczników (missed/hits) i zarządzanie cyklem życia (archiwizacja).
+        
+        Argumenty:
+            detections (List[Tuple[float, float]]): Lista wykrytych pozycji (x, y).
+            t (float): Czas aktualnego skanu.
+            
+        Zwraca:
+            List[HumanTrack]: Lista aktualnie aktywnych śladów.
+            
+        Hierarchia wywołań:
+            system.py -> AiwataLidarSystem.process_scan() -> HumanTracker.update()
+        """
         t = float(t)
         updated_tracks: set[int] = set()
 

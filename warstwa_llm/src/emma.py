@@ -17,7 +17,22 @@ if GOOGLE_API_KEY:
 _memory_instance = None
 
 def _get_memory():
-    """Lazy initialization of mem0 Memory instance."""
+    """
+    Lazy initialization of mem0 Memory instance.
+    
+    Ensures that the Memory object is created only once and reused.
+    Configures Gemini as the LLM and Embedder, and Qdrant as the vector store.
+    
+    Returns:
+        Memory: The initialized mem0 Memory instance.
+        
+    Raises:
+        Exception: If initialization fails.
+        
+    Call Hierarchy:
+        emma.py -> retrieve_relevant_memories() -> _get_memory()
+        emma.py -> consolidate_memory() -> _get_memory()
+    """
     global _memory_instance
     if _memory_instance is None:
         from mem0 import Memory
@@ -65,12 +80,15 @@ def retrieve_relevant_memories(user_id: str, query: str, n_results: int = 3) -> 
     Retrieves memories relevant to the query using mem0.
     
     Args:
-        user_id: The user identifier.
-        query: The search query.
-        n_results: Maximum number of results to return.
+        user_id (str): The user identifier (e.g., session ID).
+        query (str): The search query (usually the user's latest message).
+        n_results (int): Maximum number of results to return. Defaults to 3.
     
     Returns:
-        A formatted string with memory context, or empty string if no memories found.
+        str: A formatted string with memory context, or empty string if no memories found.
+    
+    Call Hierarchy:
+        warstwa_llm/src/main.py -> process_question() -> retrieve_relevant_memories()
     """
     print(f"DEBUG: mem0: Retrieving memories for user {user_id} with query: {query}")
     logger.info(f"mem0: Retrieving memories for user {user_id} with query: {query}")
@@ -113,10 +131,19 @@ def consolidate_memory(user_id: str, user_input: str, ai_response: str):
     """
     Consolidates the conversation turn into memory using mem0.
     
+    Adds the user input and AI response to the memory system. 
+    mem0 automatically handles extraction and storage of relevant facts.
+    
     Args:
-        user_id: The user identifier.
-        user_input: The user's message.
-        ai_response: The AI's response.
+        user_id (str): The user identifier.
+        user_input (str): The user's message.
+        ai_response (str): The AI's response.
+        
+    Returns:
+        None
+        
+    Call Hierarchy:
+        warstwa_llm/src/main.py -> process_question() -> consolidate_memory()
     """
     print(f"DEBUG: mem0: Consolidating memory for user {user_id}")
     logger.info(f"mem0: Consolidating memory for user {user_id}")

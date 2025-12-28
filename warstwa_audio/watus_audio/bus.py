@@ -12,6 +12,10 @@ class ZMQMessageBus:
     """
     Klasa obsługująca komunikację ZeroMQ (PUB/SUB) między procesem Watus a Reporterem.
     Zarządza wysyłaniem komunikatów o liderze i odbieraniem poleceń TTS.
+    
+    Hierarchia wywołań:
+        watus_main.py -> main() -> ZMQMessageBus()
+        reporter_main.py -> main() -> ZMQMessageBus()
     """
     
     def __init__(self, pub_addr: str, sub_addr: str):
@@ -21,6 +25,9 @@ class ZMQMessageBus:
         Argumenty:
             pub_addr (str): Adres gniazda PUB (do wysyłania).
             sub_addr (str): Adres gniazda SUB (do odbierania).
+        
+        Hierarchia wywołań:
+            watus_main.py -> main() -> ZMQMessageBus.__init__()
         """
         self.zmq_context = zmq.Context.instance()
 

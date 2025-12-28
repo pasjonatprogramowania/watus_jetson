@@ -73,7 +73,18 @@ def run_agent_with_logging(content: str, agent_name: str, system_prompt: str, ou
 
 
 def generate_metadata(conversation_content: str) -> DocumentMetadata:
-    """Generate metadata for conversation"""
+    """
+    Generates metadata for conversation content using LLM agent.
+    
+    Args:
+        conversation_content (str): The content of the conversation to analyze.
+        
+    Returns:
+        DocumentMetadata: Extracted metadata (keywords, topics, names, categories).
+        
+    Call Hierarchy:
+        vectordb.py -> process_file() -> generate_metadata() -> run_agent_with_logging()
+    """
     # minutes_timeout = 1
     # try:
     #     metadata, _ = run_agent_with_logging(
@@ -148,7 +159,19 @@ def batch_process(folder: str = DATA_FOLDER):
     return results
 
 def initialize_vector_db():
-    """Initialize ChromaDB client and collection"""
+    """
+    Initialize ChromaDB client and collection.
+    
+    Creates the database directory and collection if they don't exist.
+    Uses DefaultEmbeddingFunction for embeddings.
+    
+    Returns:
+        tuple: (client, collection) or (None, None) on error.
+        
+    Call Hierarchy:
+        vectordb.py -> main() -> initialize_vector_db()
+        main.py -> vector_search() -> return_collection() (similar logic)
+    """
     try:
         if not Path(CHROMADB_PATH).exists():
             os.makedirs(CHROMADB_PATH, exist_ok=True)
@@ -164,7 +187,21 @@ def initialize_vector_db():
         return None, None
 
 def add_to_vector_db(collection, results):
-    """Add processed conversations to vector database"""
+    """
+    Add processed conversations to vector database.
+    
+    Extracts metadata and content from results and adds them to the ChromaDB collection.
+    
+    Args:
+        collection: The ChromaDB collection object.
+        results (List[ProcessingResult]): List of processed files/conversations.
+        
+    Returns:
+        None
+        
+    Call Hierarchy:
+        vectordb.py -> main() -> add_to_vector_db()
+    """
     if not collection:
         logger.error("No vector database collection available")
         return
@@ -203,7 +240,20 @@ def return_collection(colection=COLLECTION_NAME):
     )
 
 def search_vector_db(collection, query: str, n_results: int = 3):
-    """Search vector database for similar conversations"""
+    """
+    Search vector database for similar conversations.
+    
+    Args:
+        collection: The ChromaDB collection to search in.
+        query (str): The user's query text.
+        n_results (int): Number of top results to return.
+        
+    Returns:
+        dict: ChromaDB query results (documents, distances, metadatas) or None on error.
+        
+    Call Hierarchy:
+        main.py -> vector_search() -> search_vector_db()
+    """
     if not collection:
         logger.error("No vector database collection available")
         return None

@@ -1,3 +1,8 @@
+"""
+Pakiet Watus Audio.
+
+Zawiera moduły obsługujące warstwę audio, TTS, STT, komunikację i logikę raportowania.
+"""
 from . import config
 from .common import log_message
 from .watus_main import main as watus_main

@@ -19,6 +19,9 @@ def check_if_text_contains_wake_word(text_to_check: str) -> bool:
         
     Zwraca:
         bool: True jeśli znaleziono wake word.
+        
+    Hierarchia wywołań:
+        stt.py -> SpeechToTextProcessingEngine._process_recorded_speech_segment() -> check_if_text_contains_wake_word()
     """
     normalized_text = re.sub(r'[^\w\s]', '', text_to_check.lower())
     for wake_phrase in config.WAKE_WORDS:
@@ -41,6 +44,9 @@ class SpeechToTextProcessingEngine:
             system_state (SystemState): Obiekt stanu systemu.
             message_bus (ZMQMessageBus): Szyna komunikatów.
             callbacks (dict): Słownik funkcji zwrotnych (np. do zmiany stanu UI).
+            
+        Hierarchia wywołań:
+            watus_main.py -> main() -> SpeechToTextProcessingEngine()
         """
         self.state = system_state
         self.bus = message_bus
@@ -56,7 +62,12 @@ class SpeechToTextProcessingEngine:
         self.cooldown_until_timestamp_ms = 0
 
     def _initialize_local_whisper_model(self):
-        """Ładuje lokalny model Faster Whisper."""
+        """
+        Ładuje lokalny model Faster Whisper.
+        
+        Hierarchia wywołań:
+            stt.py -> __init__() -> _initialize_local_whisper_model()
+        """
         log_message(f"[Watus] FasterWhisper init: model={config.WHISPER_MODEL_NAME} device={config.WHISPER_DEVICE} "
             f"compute={config.WHISPER_COMPUTE} cpu_threads={config.CPU_THREADS} workers={config.WHISPER_NUM_WORKERS}")
         start_time = time.time()
@@ -72,19 +83,35 @@ class SpeechToTextProcessingEngine:
 
     @staticmethod
     def _calculate_rms_dbfs(audio_samples: np.ndarray, epsilon=1e-9):
-        """Oblicza głośność (RMS dBFS) dla ramki audio."""
+        """
+        Oblicza głośność (RMS dBFS) dla ramki audio.
+        
+        Hierarchia wywołań:
+            stt.py -> start_listening_loop() -> _calculate_rms_dbfs()
+            stt.py -> _process_recorded_speech_segment() -> _calculate_rms_dbfs()
+        """
         root_mean_square = np.sqrt(np.mean(np.square(audio_samples) + epsilon))
         return 20 * np.log10(max(root_mean_square, epsilon))
 
     def _vad_is_speech(self, frame_bytes: bytes) -> bool:
-        """Sprawdza czy ramka zawiera mowę (używając WebRTC VAD)."""
+        """
+        Sprawdza czy ramka zawiera mowę (używając WebRTC VAD).
+        
+        Hierarchia wywołań:
+            stt.py -> start_listening_loop() -> _vad_is_speech()
+        """
         try:
             return self.vad_processor.is_speech(frame_bytes, config.SAMPLE_RATE)
         except Exception:
             return False
 
     def _transcribe_audio_segment(self, audio_samples_float32: np.ndarray) -> str:
-        """Transkrybuje segment audio używając modelu Whisper."""
+        """
+        Transkrybuje segment audio używając modelu Whisper.
+        
+        Hierarchia wywołań:
+            stt.py -> _process_recorded_speech_segment() -> _transcribe_audio_segment()
+        """
         start_time = time.time()
         segments, _ = self.whisper_model.transcribe(
             audio_samples_float32, language="pl", beam_size=1, vad_filter=False
@@ -100,6 +127,9 @@ class SpeechToTextProcessingEngine:
         
         Argumenty:
             input_device_index (int): Indeks urządzenia wejściowego.
+
+        Hierarchia wywołań:
+            watus_main.py -> main() -> start_listening_loop()
         """
         audio_input_stream = sd.InputStream(
             samplerate=config.SAMPLE_RATE, channels=1, dtype="int16",
@@ -262,6 +292,9 @@ class SpeechToTextProcessingEngine:
     def _process_recorded_speech_segment(self, recorded_speech_frames_buffer: bytearray, speech_start_timestamp_ms: int, last_voice_activity_timestamp_ms: int, speech_duration_ms: int):
         """
         Przetwarza nagrany segment mowy: transkrypcja, weryfikacja, wysłanie do busa.
+        
+        Hierarchia wywołań:
+            stt.py -> start_listening_loop() -> _process_recorded_speech_segment()
         """
         self.callbacks['indicate_think_state']()
         audio_samples_float32 = np.frombuffer(recorded_speech_frames_buffer, dtype=np.int16).astype(np.float32) / 32768.0
