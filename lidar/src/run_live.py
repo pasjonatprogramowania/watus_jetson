@@ -4,81 +4,24 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List
 
-from .hardware.lidar_driver import init_lidar, get_full_scan
+from .hardware.lidar_driver import initialize_lidar, acquire_complete_scan
 from .lidar.system import AiwataLidarSystem
-from .lidar.occupancy_grid import Pose2D, CellType, CellDanger
-from .lidar.preprocess import BeamCategory
+from .lidar.occupancy_grid import OccupancyGrid
+from .lidar.types import Pose2D, CellType, CellDanger, BeamCategory
+from .lidar.io import (
+    convert_beam_category_to_int,
+    convert_cell_type_to_int,
+    convert_cell_danger_to_int
+)
 from .config import LIDAR_PORT
 
 # liczba pakietów na pełny skan (jak w live_vis)
 FULL_SCAN_PACKETS = 60
 
 
-# ========= pomocnicze konwersje ==========
-
-def beam_category_to_int(cat: BeamCategory) -> int:
-    """
-    Konwertuje kategorię wiązki LiDAR na wartość całkowitą.
-    
-    Mapowanie kategorii:
-      - NONE -> 0 (brak kategorii)
-      - HUMAN -> 1 (wykryto człowieka)
-      - OBSTACLE -> 2 (przeszkoda statyczna)
-      - inne -> -1 (nieznana kategoria)
-    
-    Argumenty:
-        cat (BeamCategory): Enum kategorii wiązki z modułu preprocess.
-    
-    Zwraca:
-        int: Wartość całkowita reprezentująca kategorię (0, 1, 2, lub -1).
-    
-    Hierarchia wywołań:
-        run_live.py -> export_scan() -> beam_category_to_int()
-    """
-    if cat == BeamCategory.NONE:
-        return 0
-    if cat == BeamCategory.HUMAN:
-        return 1
-    if cat == BeamCategory.OBSTACLE:
-        return 2
-    return -1
-
-
-def cell_type_to_int(ct: CellType) -> int:
-    """
-    Konwertuje typ komórki siatki na wartość całkowitą.
-    
-    Argumenty:
-        ct (CellType): Enum typu komórki (UNKNOWN, FREE, STATIC_OBSTACLE, HUMAN).
-    
-    Zwraca:
-        int: Wartość całkowita reprezentująca typ komórki.
-    
-    Hierarchia wywołań:
-        run_live.py -> export_scan() -> cell_type_to_int()
-    """
-    return int(ct)
-
-
-def cell_danger_to_int(cd: CellDanger) -> int:
-    """
-    Konwertuje poziom zagrożenia komórki na wartość całkowitą.
-    
-    Argumenty:
-        cd (CellDanger): Enum poziomu zagrożenia (SAFE, DANGER).
-    
-    Zwraca:
-        int: Wartość całkowita reprezentująca poziom zagrożenia.
-    
-    Hierarchia wywołań:
-        run_live.py -> export_scan() -> cell_danger_to_int()
-    """
-    return int(cd)
-
-
 # ========= ścieżki i folder sesji ==========
 
-def create_session_dir() -> Path:
+def create_data_session_directory() -> Path:
     """
     Tworzy katalog sesji dla danych LiDAR.
     
@@ -86,14 +29,11 @@ def create_session_dir() -> Path:
     data/processed/lidar/session_YYYYMMDD_HHMMSS/
     gdzie znacznik czasu jest generowany z aktualnej daty i godziny.
     
-    Argumenty:
-        Brak
-    
     Zwraca:
         Path: Ścieżka do utworzonego katalogu sesji.
     
     Hierarchia wywołań:
-        run_live.py -> main() -> create_session_dir()
+        lidar/src/run_live.py -> main() -> create_data_session_directory()
     """
     this_file = Path(__file__).resolve()
     src_dir = this_file.parent
@@ -112,7 +52,7 @@ def create_session_dir() -> Path:
 
 # ========= eksport jednego skanu ==========
 
-def export_scan(
+def export_scan_data_to_json(
     session_dir: Path,
     scan_idx: int,
     t: float,
@@ -134,14 +74,14 @@ def export_scan(
         scan_idx (int): Numer kolejny skanu (używany do nazwy podkatalogu).
         t (float): Czas skanu w sekundach od początku sesji.
         pose (Pose2D): Pozycja robota (x, y, yaw) w chwili skanu.
-        result: Obiekt wynikowy z AiwataLidarSystem.process_scan() zawierający
+        result: Obiekt wynikowy z AiwataLidarSystem.process_complete_lidar_scan() zawierający
             beams, segments, grid i human_tracks.
     
     Zwraca:
         None
     
     Hierarchia wywołań:
-        run_live.py -> main() -> export_scan() -> beam_category_to_int()
+        lidar/src/run_live.py -> main() -> export_scan_data_to_json()
     """
     scan_id_str = f"{scan_idx:05d}"
     scan_dir = session_dir / f"scan_{scan_id_str}"
@@ -153,7 +93,7 @@ def export_scan(
         beams_rows.append([
             float(b.theta),
             float(b.r),
-            float(beam_category_to_int(b.category)),
+            float(convert_beam_category_to_int(b.category)),
         ])
 
     beams_obj: Dict[str, Any] = {
@@ -177,7 +117,7 @@ def export_scan(
     for seg in result.segments:
         segments_rows.append({
             "id": int(seg.id),
-            "base_category": beam_category_to_int(seg.base_category),
+            "base_category": convert_beam_category_to_int(seg.base_category),
             "center": [float(seg.center_x), float(seg.center_y)],
             "mean_r": float(seg.mean_r),
             "mean_theta": float(seg.mean_theta),
@@ -223,33 +163,19 @@ def export_scan(
         vy = float(getattr(tr, "vy", 0.0))
 
         raw_speed = (vx ** 2 + vy ** 2) ** 0.5
-        speed = float(getattr(tr, "speed", raw_speed))
-        heading_rad = float(getattr(tr, "heading_rad", 0.0))
+        speed = float(getattr(tr, "speed", raw_speed)) 
 
         predictions_list: List[List[float]] = []
-        if hasattr(tr, "predict_future_points"):
-            try:
-                preds = tr.predict_future_points(
-                    t_start=t,
-                    horizon_s=0.8,
-                    step_s=0.2,
-                )
-                predictions_list = [
-                    [float(tp), float(px), float(py)]
-                    for (tp, px, py) in preds
-                ]
-            except Exception:
-                predictions_list = []
 
         tracks_rows.append({
-            "id": int(tr.id),
-            "type": tr.type,
+            "id": tr.id, # id is str (uuid)
+            "state": tr.state,
             "last_position": [
-                float(tr.last_position[0]),
-                float(tr.last_position[1]),
+                float(tr.x),
+                float(tr.y),
             ],
             "last_update_time": float(tr.last_update_time),
-            "missed_count": int(tr.missed_count),
+            "missed_count": int(tr.missed_frames),
             "history": [
                 [float(ti), float(xi), float(yi)]
                 for (ti, xi, yi) in tr.history
@@ -257,8 +183,7 @@ def export_scan(
             "vx": vx,
             "vy": vy,
             "speed": speed,
-            "heading_rad": heading_rad,
-            "predictions": predictions_list,  # [t_pred, x_pred, y_pred]
+            "predictions": predictions_list,
         })
 
     tracks_obj: Dict[str, Any] = {
@@ -273,11 +198,7 @@ def export_scan(
     )
 
     # 5) APPEND TO DATA/LIDAR.JSON (JSON LINES)
-    # session_dir = .../data/processed/lidar/session_XXX
-    # We want .../data/lidar.json
-    # session_dir.parent -> .../data/processed/lidar
-    # session_dir.parent.parent -> .../data/processed
-    # session_dir.parent.parent.parent -> .../data
+    # Wyjście ze struktury src/... do root
     data_dir = session_dir.parent.parent.parent
     lidar_json_path = data_dir / "lidar.json"
 
@@ -299,19 +220,13 @@ def main() -> None:
     
     Pętla może być przerwana przez Ctrl+C.
     
-    Argumenty:
-        Brak
-    
-    Zwraca:
-        None
-    
     Hierarchia wywołań:
-        run.py -> main()
-        __main__ -> main() -> create_session_dir(), export_scan()
+        lidar/run.py -> main()
+        lidar/src/run_live.py -> __main__ -> main()
     """
     try:
         print(f"Próbuję otworzyć lidar na porcie {LIDAR_PORT}...")
-        init_lidar(port=LIDAR_PORT)
+        initialize_lidar(port=LIDAR_PORT)
         print("Połączono z lidarem.\n")
     except Exception as e:
         print(f"Nie udało się połączyć z lidarem na porcie {LIDAR_PORT}.")
@@ -320,7 +235,7 @@ def main() -> None:
         return
 
     # folder sesji
-    session_dir = create_session_dir()
+    session_dir = create_data_session_directory()
 
     # system przetwarzania
     system = AiwataLidarSystem()
@@ -336,14 +251,14 @@ def main() -> None:
     try:
         while True:
             # pełniejszy skan z wielu pakietów
-            r, theta = get_full_scan(num_packets=FULL_SCAN_PACKETS)
+            r, theta = acquire_complete_scan(num_packets=FULL_SCAN_PACKETS)
             t = time.time() - t0
 
             # preprocess + segmentacja + mapa + tracking
-            result = system.process_scan(r, theta, pose, t)
+            result = system.process_complete_lidar_scan(r, theta, pose, t)
 
             # eksport skanu
-            export_scan(session_dir, scan_idx, t, pose, result)
+            export_scan_data_to_json(session_dir, scan_idx, t, pose, result)
             print(f"Zapisano skan #{scan_idx} (wiązki={len(result.beams)})")
 
             scan_idx += 1

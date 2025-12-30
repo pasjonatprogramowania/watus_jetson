@@ -85,6 +85,7 @@ htmlcov/
 **/models/
 **/runs/
 **/ft-yolo-models/
+**/__pycache__/
 # Wyjątek: jeśli chcesz jednak trackować konkretny model, ścieżka musi być z !
 # !warstwa_wizji/models/yolo12s.pt
 

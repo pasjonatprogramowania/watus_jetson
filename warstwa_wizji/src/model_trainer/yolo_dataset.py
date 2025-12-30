@@ -5,10 +5,10 @@ from ultralytics.data import dataset
 class YOLOWeightedDataset(dataset.YOLODataset):
     def __init__(self, *args, mode="train", **kwargs):
         """
-        Initialize the WeightedDataset.
+        Inicjalizuje WeightedDataset.
 
-        Args:
-            class_weights (list or numpy array): A list or array of weights corresponding to each class.
+        Argumenty:
+            class_weights (list or numpy array): Lista lub tablica wag odpowiadających każdej klasie.
         """
 
         super(YOLOWeightedDataset, self).__init__(*args, **kwargs)
@@ -16,11 +16,11 @@ class YOLOWeightedDataset(dataset.YOLODataset):
         self.counts = None
         self.train_mode = "train" in self.prefix
 
-        # You can also specify weights manually instead
+        # Możesz również określić wagi ręcznie
         self.count_instances()
         class_weights = np.sum(self.counts) / self.counts
 
-        # Aggregation function
+        # Funkcja agregująca
         self.agg_func = np.mean
 
         self.class_weights = np.array(class_weights)
@@ -29,10 +29,10 @@ class YOLOWeightedDataset(dataset.YOLODataset):
 
     def count_instances(self):
         """
-        Count the number of instances per class
+        Zlicza liczbę wystąpień dla każdej klasy.
 
-        Returns:
-            dict: A dict containing the counts for each class.
+        Zwraca:
+            dict: Słownik zawierający liczniki dla każdej klasy.
         """
         self.counts = [0 for i in range(len(self.data["names"]))]
         for label in self.labels:
@@ -46,32 +46,32 @@ class YOLOWeightedDataset(dataset.YOLODataset):
 
     def calculate_weights(self):
         """
-        Calculate the aggregated weight for each label based on class weights.
+        Oblicza zagregowaną wagę dla każdej etykiety na podstawie wag klas.
 
-        Returns:
-            list: A list of aggregated weights corresponding to each label.
+        Zwraca:
+            list: Lista zagregowanych wag odpowiadających każdej etykiecie.
         """
         weights = []
         for label in self.labels:
             cls = label['cls'].reshape(-1).astype(int)
 
-            # Give a default weight to background class
+            # Daj domyślną wagę dla klasy tła
             if cls.size == 0:
                 weights.append(1)
                 continue
 
-            # Take mean of weights
-            # You can change this weight aggregation function to aggregate weights differently
+            # Weź średnią ze wag
+            # Możesz zmienić tę funkcję agregacji wag, aby agregować wagi inaczej
             weight = self.agg_func(self.class_weights[cls])
             weights.append(weight)
         return weights
 
     def calculate_probabilities(self):
         """
-        Calculate and store the sampling probabilities based on the weights.
+        Oblicza i przechowuje prawdopodobieństwa próbkowania na podstawie wag.
 
-        Returns:
-            list: A list of sampling probabilities corresponding to each label.
+        Zwraca:
+            list: Lista prawdopodobieństw próbkowania odpowiadających każdej etykiecie.
         """
         total_weight = sum(self.weights)
         probabilities = [w / total_weight for w in self.weights]
@@ -79,9 +79,9 @@ class YOLOWeightedDataset(dataset.YOLODataset):
 
     def __getitem__(self, index):
         """
-        Return transformed label information based on the sampled index.
+        Zwraca przetransformowane informacje o etykiecie na podstawie indeksu próbkowania.
         """
-        # Don't use for validation
+        # Nie używaj do walidacji
         if not self.train_mode:
             return self.transforms(self.get_image_and_label(index))
         else:

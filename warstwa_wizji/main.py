@@ -116,7 +116,7 @@ class CVAgent:
         if self.device.type == "cuda":
             torch.backends.cudnn.benchmark = True
         
-        # Load Classifiers
+        # Ładowanie klasyfikatorów
         if GPU_ENABLED:
             self.emotion_classifier, self.gender_classifier, self.age_classifier = getClassifiers()
             self.clothes_type_clf, self.clothes_pattern_clf, self.color_clf = getClothesClassifiers()
@@ -124,7 +124,7 @@ class CVAgent:
 
         if cap is None:
             if use_net_stream:
-                # GStreamer pipeline for network stream
+                # Potok GStreamer dla strumienia sieciowego
                 gst_pipeline = (
                     "udpsrc port=5000 ! "
                     "application/x-rtp, media=video, clock-rate=90000, encoding-name=H264, payload=96 ! "
@@ -332,12 +332,12 @@ class CVAgent:
         lidar_tracks_data = []
 
         def get_lidar_tracks():
-            """Reads the last line of lidar.json"""
+            """Czyta ostatnią linię pliku lidar.json"""
             try:
                 if not os.path.exists(lidar_path):
                     return []
-                # Efficiently read last line - for now just readlines (simple) or Seek
-                # Since we don't have a giant file helper, standard read is okay for small buffer or we assume append
+                # Efektywne czytanie ostatniej linii - na razie readlines (proste)
+                # Ponieważ nie mamy pomocnika do dużych plików, standardowy odczyt jest OK dla małego bufora
                 with open(lidar_path, 'r') as f:
                     lines = f.readlines()
                     if not lines:
@@ -354,7 +354,7 @@ class CVAgent:
                 return []
         
         def compute_lidar_angle_local(lx, ly):
-            # angle in degrees
+            # kąt w stopniach
             return math.degrees(math.atan2(lx, ly))
 
         save_video = self.init_recorder(out_path) if save_video else None
@@ -420,14 +420,14 @@ class CVAgent:
                     # Próba skojarzenia obiektów wizyjnych (2D) z trackerami LiDAR (3D).
                     # Dopasowanie odbywa się na podstawie kąta azymutu obu obiektów.
                     # Pozwala to przypisać odległość (precyzyjną z lasera) do osoby z kamery.
-                    # --- LIDAR SYNC ---
-                    lidar_matches = {} # map track_id -> lidar_track_dict
+                    # --- SYNCHRONIZACJA Z LIDAREM ---
+                    lidar_matches = {} # mapa track_id -> lidar_track_dict
                     if consolidate_with_lidar:
                         l_tracks = get_lidar_tracks()
-                        # Simple greedy matching
+                        # Proste dopasowanie zachłanne
                         used_lidar_indices = set()
                         
-                        # Precompute camera angles for all people
+                        # Wstępne obliczenie kątów kamery dla wszystkich osób
                         people_indices = [idx for idx, lbl in enumerate(labels) if lbl == 0]
                         
                         person_angles = []
@@ -436,7 +436,7 @@ class CVAgent:
                              _ang = calc_obj_angle((_x, _y), (_x + _w, _y + _h), self.imgsz, fov_deg=fov_deg)
                              person_angles.append((idx, _ang))
                              
-                        # Try to match each person to closest lidar track
+                        # Próba dopasowania każdej osoby do najbliższej ścieżki z Lidara
                         for p_idx, p_ang in person_angles:
                             best_lidar_idx = -1
                             min_diff = 1000.0
@@ -455,8 +455,7 @@ class CVAgent:
                             
                             if best_lidar_idx != -1:
                                 used_lidar_indices.add(best_lidar_idx)
-                                # Map camera track_id (if exists) or just index to lidar data
-                                # Here we map for the loop below
+                                # Mapuj track_id kamery (jeśli istnieje) lub indeks do danych lidara
                                 lidar_matches[p_idx] = l_tracks[best_lidar_idx]
 
                     frame_bgr = dets.plot() if show_window else frame_bgr
@@ -474,8 +473,8 @@ class CVAgent:
                         # Dla wykrytych osób, wycinany jest fragment obrazu (crop) i przekazywany
                         # do dodatkowych klasyfikatorów. Wyniki są cache'owane co N klatek
                         # aby oszczędzać zasoby obliczeniowe.
-                        # --- CLOTHES DETECTION ON PERSON ---
-                        if label == 0:  # Person
+                        # --- DETEKCJA UBRAŃ NA OSOBIE ---
+                        if label == 0:  # Osoba
                             b_x1, b_y1, b_x2, b_y2 = map(int, boxes_xyxy[i].tolist())
                             # Clamp
                             H_frame, W_frame = frame_bgr.shape[:2]
@@ -486,12 +485,12 @@ class CVAgent:
                                 person_crop = frame_bgr[b_y1:b_y2, b_x1:b_x2]
                                 current_h, current_w = person_crop.shape[:2]
                                 
-                                # Check cache
+                                # Sprawdź cache
                                 cache_entry = self.person_cache.get(track_id, {"last_frame": -9999})
                                 should_update = (self.frame_idx - cache_entry["last_frame"]) > 100
 
                                 if should_update:
-                                    # --- UPDATE CACHE (Clothes + Classifiers) ---
+                                    # --- AKTUALIZACJA CACHE (Ubrania + Klasyfikatory) ---
                                     new_cache = {
                                         "last_frame": self.frame_idx,
                                         "clothes": [],
@@ -501,7 +500,7 @@ class CVAgent:
                                         "lidar_data": cache_entry.get("lidar_data")
                                     }
 
-                                    # 1. CLOTHES
+                                    # 1. UBRANIA
                                     results_clothes = self.clothes_detector.predict(person_crop, verbose=False)
                                     clothes_data = []
                                     for rc in results_clothes:
@@ -510,7 +509,7 @@ class CVAgent:
                                         c_conf  = rc.boxes.conf.cpu().numpy()
                                         c_names = rc.names
                                         for cb, cc, ccnf in zip(c_boxes, c_clss, c_conf):
-                                            # Normalize coordinates (0-1) relative to crop
+                                            # Normalizuj współrzędne (0-1) względem wycinka
                                             cx1, cy1, cx2, cy2 = cb
                                             norm_box = [float(cx1)/current_w, float(cy1)/current_h, float(cx2)/current_w, float(cy2)/current_h]
                                             
@@ -518,10 +517,10 @@ class CVAgent:
                                             label_name = c_names[int(cc)]
                                             
                                             
-                                            # Sub-crop for the specific item
-                                            # Coordinates are relative to person_crop
+                                            # Pod-wycinek dla konkretnego przedmiotu
+                                            # Współrzędne są względne do person_crop
                                             icx1, icy1, icx2, icy2 = int(cx1), int(cy1), int(cx2), int(cy2)
-                                            # Clamp
+                                            # Przytnij
                                             icx1 = max(0, icx1); icy1 = max(0, icy1)
                                             icx2 = min(current_w, icx2); icy2 = min(current_h, icy2)
                                             
@@ -530,11 +529,10 @@ class CVAgent:
                                                 try:
                                                     item_pil = Image.fromarray(cv2.cvtColor(item_crop, cv2.COLOR_BGR2RGB))
                                                     
-                                                    # Color for all relevant classes
+                                                    # Kolor dla wszystkich istotnych klas
                                                     if label_name in ["clothing", "shoe", "bag"] and GPU_ENABLED:
-                                                        # color_clf returns tuple (R, G, B) or similar
-                                                        # Assuming simple tuple or string logic. 
-                                                        # User said "zwraca krotkę w RGB". We should probably format it.
+                                                        # color_clf zwraca krotkę (R, G, B) lub podobną
+                                                        # Zakładając prostą krotkę lub logikę stringa.
                                                         
                                                         dom_color = self.color_clf(np.asarray(item_pil))
                                                         details["color"] = [int(x) for x in dom_color]
@@ -559,7 +557,7 @@ class CVAgent:
                                             })
                                     new_cache["clothes"] = clothes_data
 
-                                    # 2. CLASSIFIERS
+                                    # 2. KLASYFIKATORY
                                     try:
                                         pil_img = Image.fromarray(cv2.cvtColor(person_crop, cv2.COLOR_BGR2RGB))
 
@@ -578,14 +576,14 @@ class CVAgent:
                                     self.person_cache[track_id] = new_cache
                                     cache_entry = new_cache
 
-                                # --- DRAW FROM CACHE ---
-                                # Draw Clothes
+                                # --- RYSOWANIE Z CACHE ---
+                                # Rysuj ubrania
                                 if "clothes" in cache_entry:
                                     for item in cache_entry["clothes"]:
                                         nx1, ny1, nx2, ny2 = item["box_norm"]
                                         label_txt = f"{item['label']} {item['conf']:.2f}"
                                         
-                                        # Denormalize to current frame global coordinates
+                                        # Odnormalizuj do globalnych współrzędnych klatki
                                         gx1 = int(b_x1 + nx1 * current_w)
                                         gy1 = int(b_y1 + ny1 * current_h)
                                         gx2 = int(b_x1 + nx2 * current_w)
@@ -596,7 +594,7 @@ class CVAgent:
                                         cv2.putText(frame_bgr, label_txt, (gx1, gy1 - 5),
                                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-                                # Attributes info
+                                # Informacje o atrybutach
                                 add_info = []
                                 if "gender" in cache_entry and cache_entry["gender"]: 
                                     add_info.append({"gender": cache_entry["gender"]})
@@ -608,23 +606,23 @@ class CVAgent:
                                     add_info.append({"clothes": cache_entry["clothes"]})
 
                         
-                        # --- LIDAR INFO ---
+                        # --- INFO Z LIDARA ---
                         lidar_info = {}
                         l_id = None
                         l_dist = None
                         
-                        # 1. Try to get new match
+                        # 1. Próba uzyskania nowego dopasowania
                         if i in lidar_matches:
                             lm = lidar_matches[i]
                             l_id = lm.get("id", "?")
                             l_dist = lm.get("last_position", [0, 0])[1] # y is forward
                             
-                            # Save to cache
+                            # Zapisz do cache
                             if track_id not in self.person_cache:
                                 self.person_cache[track_id] = {"last_frame": -9999}
                             self.person_cache[track_id]["lidar_data"] = {"id": l_id, "dist": l_dist}
                         
-                        # 2. If no new match, check cache
+                        # 2. Jeśli brak nowego dopasowania, sprawdź cache
                         elif track_id in self.person_cache and self.person_cache[track_id].get("lidar_data"):
                             cached_l = self.person_cache[track_id]["lidar_data"]
                             l_id = cached_l["id"]
@@ -633,7 +631,7 @@ class CVAgent:
                         if l_id is not None:
                             lidar_info = {"lidar_id": l_id, "distance": l_dist}
                             
-                            # Draw on frame
+                            # Rysuj na klatce
                             txt_lidar = f"LIDAR ID: {l_id} Dist: {l_dist:.2f}m"
                             cv2.putText(frame_bgr, txt_lidar, (int(x), int(y) - 20), 
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
@@ -659,7 +657,7 @@ class CVAgent:
                 # =========================================================================
                 # Opcjonalny moduł uruchamiany co 10 klatek. Służy do wykrywania zagrożeń.
                 # Wykorzystuje osobny, dedykowany model YOLO.
-                # --- WEAPON DETECTION ---
+                # --- DETEKCJA BRONI ---
                 if weapon_detection_enabled and (self.frame_idx % 10 == 0):
                     with torch.inference_mode():
                         res_guns = self.guns_detector(frame_bgr, verbose=False)
@@ -677,14 +675,14 @@ class CVAgent:
                                 "label": g_label
                             })
                 
-                # Draw and add to detections (if enabled and present)
+                # Rysuj i dodaj do detekcji (jeśli włączone i obecne)
                 if weapon_detection_enabled:
                     for gun in self.last_detected_guns:
                         gx1, gy1, gx2, gy2 = gun["box"]
                         g_conf = gun["conf"]
                         g_label = gun["label"]
 
-                        # Draw BLACK box (0, 0, 0)
+                        # Rysuj CZARNĄ ramkę (0, 0, 0)
                         if show_window:
                             cv2.rectangle(frame_bgr, (int(gx1), int(gy1)), (int(gx2), int(gy2)), (0, 0, 0), 2)
                             cv2.putText(frame_bgr, f"{g_label} {g_conf:.2f}", (int(gx1), int(gy1)-10),

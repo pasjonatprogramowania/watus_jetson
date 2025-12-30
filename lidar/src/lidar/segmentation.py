@@ -35,8 +35,7 @@ class Segment:
         base_category (BeamCategory): Kategoria segmentu (OBSTACLE/HUMAN).
     
     Hierarchia wywołań:
-        Tworzony przez: segment_scan() -> finalize_segment()
-        Używany w: system.py, run_live.py
+        lidar/src/lidar/segmentation.py -> group_beams_into_segments() -> finalize_segment() -> Segment()
     """
     id: int
     beams: List[BeamResult]
@@ -49,7 +48,7 @@ class Segment:
     base_category: BeamCategory  # kategoria segmentu (np. OBSTACLE / HUMAN)
 
 
-def beam_to_xy_local(beam: BeamResult) -> Tuple[float, float]:
+def convert_beam_to_local_cartesian(beam: BeamResult) -> Tuple[float, float]:
     """
     Konwertuje wiązkę ze współrzędnych biegunowych na kartezjańskie.
     
@@ -60,7 +59,7 @@ def beam_to_xy_local(beam: BeamResult) -> Tuple[float, float]:
         Tuple[float, float]: Para (x, y) w układzie lokalnym robota.
     
     Hierarchia wywołań:
-        segmentation.py -> segment_scan() -> beam_to_xy_local()
+        lidar/src/lidar/segmentation.py -> group_beams_into_segments() -> convert_beam_to_local_cartesian()
     """
     # BeamResult -> (x,y) w układzie lokalnym robota
     x = beam.r * np.cos(beam.theta)
@@ -68,7 +67,7 @@ def beam_to_xy_local(beam: BeamResult) -> Tuple[float, float]:
     return x, y
 
 
-def segment_scan(
+def group_beams_into_segments(
     beams: List[BeamResult],
     max_distance_jump: float = SEG_MAX_DISTANCE_JUMP_M,
     max_angle_jump: float = np.deg2rad(SEG_MAX_ANGLE_JUMP_DEG),
@@ -83,7 +82,7 @@ def segment_scan(
       - wiązka ma kategorię NONE
     
     Argumenty:
-        beams (List[BeamResult]): Lista wiązek z preprocess_scan().
+        beams (List[BeamResult]): Lista wiązek z process_raw_scan_data().
         max_distance_jump (float): Maksymalny skok przestrzenny w metrach.
         max_angle_jump (float): Maksymalny skok kątowy w radianach.
         min_beams_in_segment (int): Minimalna liczba wiązek w segmencie.
@@ -92,7 +91,7 @@ def segment_scan(
         List[Segment]: Lista wykrytych segmentów.
     
     Hierarchia wywołań:
-        system.py -> AiwataLidarSystem.process_scan() -> segment_scan()
+        lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> group_beams_into_segments()
     """
     # Dzieli skan (BeamResult) na segmenty na podstawie skoków odległości i kąta
     segments: List[Segment] = []
@@ -113,7 +112,7 @@ def segment_scan(
         thetas = []
 
         for b in seg_beams:
-            x, y = beam_to_xy_local(b)
+            x, y = convert_beam_to_local_cartesian(b)
             xs.append(x)
             ys.append(y)
             rs.append(b.r)
@@ -163,7 +162,7 @@ def segment_scan(
                 prev_y = None
             continue
 
-        x, y = beam_to_xy_local(b)
+        x, y = convert_beam_to_local_cartesian(b)
 
         if prev_beam is None:
             # start nowego segmentu
@@ -173,11 +172,11 @@ def segment_scan(
             continue
 
         # skok w kącie i w przestrzeni między kolejnymi punktami
-        angle_jump = abs(b.theta - prev_beam.theta)
-        dist_jump = np.hypot(x - prev_x, y - prev_y)
+        angle_jump_val = abs(b.theta - prev_beam.theta)
+        distance_jump_val = np.hypot(x - prev_x, y - prev_y)
 
         # jeśli skok za duży -> zamykamy segment, zaczynamy nowy
-        if angle_jump > max_angle_jump or dist_jump > max_distance_jump:
+        if angle_jump_val > max_angle_jump or distance_jump_val > max_distance_jump:
             seg = finalize_segment(seg_id_counter, current_beams)
             if seg is not None:
                 segments.append(seg)
@@ -199,7 +198,7 @@ def segment_scan(
     return segments
 
 
-def classify_segment_type(seg: Segment) -> BeamCategory:
+def classify_object_type(segment: Segment) -> BeamCategory:
     """
     Klasyfikuje segment jako człowieka lub przeszkodę.
     
@@ -209,38 +208,38 @@ def classify_segment_type(seg: Segment) -> BeamCategory:
       - Minimalna liczba wiązek >= SEG_HUMAN_MIN_BEAMS
     
     Argumenty:
-        seg (Segment): Segment do sklasyfikowania.
+        segment (Segment): Segment do sklasyfikowania.
     
     Zwraca:
         BeamCategory: HUMAN jeśli spełnia kryteria, OBSTACLE w przeciwnym razie.
     
     Hierarchia wywołań:
-        segmentation.py -> assign_segment_categories() -> classify_segment_type()
+        lidar/src/lidar/segmentation.py -> categorize_all_segments() -> classify_object_type()
     """
     # heurystyka: czy segment wygląda jak człowiek
 
     # zbyt blisko lub zbyt daleko -> nie człowiek
-    if seg.mean_r < SEG_HUMAN_MIN_R_M or seg.mean_r > SEG_HUMAN_MAX_R_M:
+    if segment.mean_r < SEG_HUMAN_MIN_R_M or segment.mean_r > SEG_HUMAN_MAX_R_M:
         return BeamCategory.OBSTACLE
 
     # zbyt mały albo zbyt duży segment -> nie człowiek
-    if seg.length < SEG_HUMAN_MIN_LENGTH_M or seg.length > SEG_HUMAN_MAX_LENGTH_M:
+    if segment.length < SEG_HUMAN_MIN_LENGTH_M or segment.length > SEG_HUMAN_MAX_LENGTH_M:
         return BeamCategory.OBSTACLE
 
     # za mało wiązek -> raczej szum / krawędź
-    if len(seg.beams) < SEG_HUMAN_MIN_BEAMS:
+    if len(segment.beams) < SEG_HUMAN_MIN_BEAMS:
         return BeamCategory.OBSTACLE
 
     return BeamCategory.HUMAN
 
 
 
-def assign_segment_categories(segments: List[Segment]) -> None:
+def categorize_all_segments(segments: List[Segment]) -> None:
     """
     Przypisuje kategorie do wszystkich segmentów i ich wiązek.
     
     Modyfikuje obiekty in-place, ustawiając base_category segmentu
-    i category każdej wiązki na podstawie classify_segment_type().
+    i category każdej wiązki na podstawie classify_object_type().
     
     Argumenty:
         segments (List[Segment]): Lista segmentów do sklasyfikowania.
@@ -249,11 +248,11 @@ def assign_segment_categories(segments: List[Segment]) -> None:
         None (modyfikuje obiekty in-place)
     
     Hierarchia wywołań:
-        system.py -> AiwataLidarSystem.process_scan() -> assign_segment_categories()
+        lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> categorize_all_segments()
     """
     # Ustawia kategorię segmentu i wszystkich jego wiązek
     for seg in segments:
-        new_cat = classify_segment_type(seg)
+        new_cat = classify_object_type(seg)
         seg.base_category = new_cat
         for b in seg.beams:
             b.category = new_cat

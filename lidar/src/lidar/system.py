@@ -1,11 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Tuple
 
 import numpy as np
 
-from .preprocess import preprocess_scan, BeamResult, BeamCategory
-from .segmentation import segment_scan, assign_segment_categories, Segment
+from .preprocess import process_raw_scan_data, BeamResult, BeamCategory
+from .segmentation import group_beams_into_segments, categorize_all_segments, Segment
 from .occupancy_grid import OccupancyGrid, Pose2D
 from .tracking import HumanTracker, HumanTrack
 
@@ -35,8 +35,7 @@ class ScanResult:
         grid (OccupancyGrid): Zaktualizowana siatka zajętości.
     
     Hierarchia wywołań:
-        Zwracany przez: AiwataLidarSystem.process_scan()
-        Używany w: run_live.py, Live_Vis_v3.py
+        lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> ScanResult()
     """
     beams: List[BeamResult]         # wiązki z kategoriami
     segments: List[Segment]         # segmenty obiektów
@@ -55,8 +54,8 @@ class AiwataLidarSystem:
       - Tracking (sledzenie ludzi w czasie)
     
     Hierarchia wywołań:
-        run_live.py -> main() -> AiwataLidarSystem.process_scan()
-        Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem.process_scan()
+        lidar/src/run_live.py -> main() -> AiwataLidarSystem()
+        lidar/src/Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem()
     """
     # Główna klasa spinająca preprocess, segmentację, mapę i tracking
 
@@ -79,8 +78,8 @@ class AiwataLidarSystem:
             max_missed (int): Ile skanów track może zostać bez detekcji.
         
         Hierarchia wywołań:
-            run_live.py -> main() -> AiwataLidarSystem()
-            Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem()
+            lidar/src/run_live.py -> main() -> AiwataLidarSystem()
+            lidar/src/Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem()
         """
         # inicjalizacja mapy
         self.grid = OccupancyGrid(
@@ -90,17 +89,18 @@ class AiwataLidarSystem:
         )
 
         # inicjalizacja trackera ludzi
-        self.tracker = HumanTracker(
-            max_match_distance=max_match_distance,
-            max_missed=max_missed,
-        )
+        self.tracker = HumanTracker()
+        
+        # Uwaga: Parametry max_match_distance i max_missed w oryginalnym kodzie 
+        # były przekazywane do __init__, ale HumanTracker korzysta teraz ze stałych z config.py.
+        # Zachowano argumenty dla kompatybilności API.
 
-    def process_scan(
+    def process_complete_lidar_scan(
         self,
-        r: np.ndarray,
-        theta: np.ndarray,
+        range_arr: np.ndarray,
+        angle_arr: np.ndarray,
         pose: Pose2D,
-        t: float,
+        timestamp: float,
     ) -> ScanResult:
         """
         Przetwarza pojedynczy skan LiDAR przez pełny pipeline.
@@ -114,46 +114,53 @@ class AiwataLidarSystem:
           6. Filtrowanie tracków - tylko potwierdzone śledzenia ludzi
         
         Argumenty:
-            r (np.ndarray): Tablica odległości w metrach.
-            theta (np.ndarray): Tablica kątów w radianach.
+            range_arr (np.ndarray): Tablica odległości w metrach.
+            angle_arr (np.ndarray): Tablica kątów w radianach.
             pose (Pose2D): Pozycja robota (x, y, yaw).
-            t (float): Czas skanu w sekundach.
+            timestamp (float): Czas skanu w sekundach.
         
         Zwraca:
             ScanResult: Kompletny wynik przetwarzania.
         
         Hierarchia wywołań:
-            system.py -> AiwataLidarSystem.process_scan()
-                -> preprocess_scan(), segment_scan(), assign_segment_categories()
-                -> grid.update_from_scan(), tracker.update()
+            lidar/src/run_live.py -> main() -> AiwataLidarSystem.process_complete_lidar_scan()
+            lidar/src/Live_Vis_v3.py -> record_scans() -> AiwataLidarSystem.process_complete_lidar_scan()
         """
         # 1) preprocessing
-        beams: List[BeamResult] = preprocess_scan(r, theta)
+        beams: List[BeamResult] = process_raw_scan_data(range_arr, angle_arr)
 
         # 2) segmentacja + klasyfikacja
-        segments: List[Segment] = segment_scan(beams)
-        assign_segment_categories(segments)
+        segments: List[Segment] = group_beams_into_segments(beams)
+        categorize_all_segments(segments)
 
         # 3) aktualizacja mapy
-        self.grid.update_from_scan(pose, beams)
+        self.grid.update_grid_from_scan_result(pose, beams)
 
-        # 4) detections HUMAN – jedna detekcja na segment (środek obiektu)
-        detections: List[Tuple[float, float]] = []
+        # 4) detekcja HUMAN - przygotowanie segmentów dla trackera (współrzędne globalne)
+        # Tracker oczekuje segmentów, ale śledzimy obiekty w układzie GLOBALNYM.
+        # Segmenty z segmentacji są w układzie LOKALNYM (robota).
+        # Tworzymy kopie segmentów z przeliczonymi środkami na układ globalny.
+        
+        segments_for_tracker: List[Segment] = []
         for seg in segments:
-            if seg.base_category == BeamCategory.HUMAN:
-                # center_x, center_y są w układzie lokalnym robota
-                # używamy _local_to_world z OccupancyGrid (mimo underscore)
-                xw, yw = self.grid._local_to_world(pose, seg.center_x, seg.center_y)
-                detections.append((xw, yw))
+            # Przelicz środek segmentu na układ świata
+            xw, yw = self.grid.transform_local_to_world(pose, seg.center_x, seg.center_y)
+            
+            # Stwórz kopię segmentu z nowym środkiem (dataclasses.replace tworzy płytką kopię)
+            # Zmieniamy tylko center_x i center_y, reszta (np. beams) zostaje bez zmian (i tak ich tracker nie używa głęboko)
+            global_seg = replace(seg, center_x=xw, center_y=yw)
+            segments_for_tracker.append(global_seg)
 
-        # 5) update trackera – wszystkie tracki (kandydaci + potencjalni ludzie)
-        all_tracks: List[HumanTrack] = self.tracker.update(detections, t)
+        # 5) aktualizacja trackera
+        self.tracker.update_tracker(segments_for_tracker, dt_s=0.1) # Zakładamy dt ok 0.1s lub można policzyć z timestamp
 
-        # 6) filtr "prawdziwych" ludzi:
+        # 6) filtrowanie "prawdziwych" ludzi:
         #    - minimalna długość historii,
         #    - minimalna prędkość,
         #    - minimalne całkowite przemieszczenie.
+        all_tracks = self.tracker.get_all_tracks()
         human_tracks: List[HumanTrack] = []
+        
         for tr in all_tracks:
             # wystarczająco długa historia?
             if len(tr.history) < TRACK_HUMAN_FILTER_MIN_AGE:
@@ -161,13 +168,14 @@ class AiwataLidarSystem:
 
             # całkowite przemieszczenie od pierwszej do ostatniej pozycji
             t0, x0, y0 = tr.history[0]
+            # tr.history[-1] to ostatnia znana pozycja (zazwyczaj bieżąca)
             t1, x1, y1 = tr.history[-1]
             travel = float(np.hypot(x1 - x0, y1 - y0))
 
-            # prędkość – użyj property "speed" jeśli jest, inaczej policz z vx, vy
-            vx = float(getattr(tr, "vx", 0.0))
-            vy = float(getattr(tr, "vy", 0.0))
-            speed = float(getattr(tr, "speed", np.hypot(vx, vy)))
+            # prędkość – użyj vx, vy obliczonych przez filtr
+            vx = float(tr.vx)
+            vy = float(tr.vy)
+            speed = float(np.hypot(vx, vy))
 
             if speed < TRACK_MIN_MOVING_SPEED_M_S:
                 continue
@@ -176,11 +184,9 @@ class AiwataLidarSystem:
 
             human_tracks.append(tr)
 
-
         return ScanResult(
             beams=beams,
             segments=segments,
             human_tracks=human_tracks,
             grid=self.grid,
         )
-

@@ -4,17 +4,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Ładowanie zmiennych środowiskowych z pliku .env
-# Load environment variables from .env file
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=True)
 
-# === Ustawienia Ogólne (General) ===
+# === Ustawienia Ogólne ===
 # Zapobieganie błędom bibliotek Intel MKL/OpenMP
 KMP_DUPLICATE_LIB_OK = os.environ.get("KMP_DUPLICATE_LIB_OK", "TRUE")
 OMP_NUM_THREADS = os.environ.get("OMP_NUM_THREADS", "1")
 MKL_NUM_THREADS = os.environ.get("MKL_NUM_THREADS", "1")
 CT2_SKIP_CONVERTERS = os.environ.get("CT2_SKIP_CONVERTERS", "1")
 
-# === Komunikacja ZMQ (ZMQ Communication) ===
+# === Komunikacja ZMQ ===
 # Adresy gniazd ZMQ do komunikacji między procesami
 PUB_ADDR = os.environ.get("ZMQ_PUB_ADDR", "tcp://127.0.0.1:7780")
 SUB_ADDR = os.environ.get("ZMQ_SUB_ADDR", "tcp://127.0.0.1:7781")
@@ -109,7 +108,7 @@ if os.environ.get("WHISPER_COMPUTE"):
 WHISPER_NUM_WORKERS = int(os.environ.get("WHISPER_NUM_WORKERS", "1"))
 CPU_THREADS = int(os.environ.get("WATUS_CPU_THREADS", str(os.cpu_count() or 4)))
 
-# === Audio i VAD (Voice Activity Detection) ===
+# === Audio i VAD ===
 SAMPLE_RATE = int(os.environ.get("WATUS_SR", "16000"))
 BLOCK_SIZE = int(os.environ.get("WATUS_BLOCKSIZE", str(int(round(SAMPLE_RATE * 0.02)))))
 VAD_MODE = int(os.environ.get("WATUS_VAD_MODE", "1"))
@@ -134,7 +133,7 @@ OUT_DEV_ENV = os.environ.get("WATUS_OUTPUT_DEVICE") # ID głośników
 
 DIALOG_PATH = os.environ.get("DIALOG_PATH", "data/watus_audio/dialog.jsonl")
 
-# === Weryfikacja Mówcy (Speaker Verification) ===
+# === Weryfikacja Mówcy ===
 SPEAKER_VERIFY = int(os.environ.get("SPEAKER_VERIFY", "1"))
 WAKE_WORDS = [w.strip() for w in
               os.environ.get("WAKE_WORDS", "hej watusiu,hej watuszu,hej watusił,kej watusił,hej watośiu").split(",") if
@@ -151,7 +150,7 @@ SPEAKER_MAX_DBFS = float(os.environ.get("SPEAKER_MAX_DBFS", "-5"))
 SPEAKER_BACK_THRESHOLD = float(os.environ.get("SPEAKER_BACK_THRESHOLD", "0.56"))
 SPEAKER_REQUIRE_MATCH = int(os.environ.get("SPEAKER_REQUIRE_MATCH", "1"))
 
-# === Zachowanie (Behavior) ===
+# === Zachowanie ===
 WAIT_REPLY_S = float(os.environ.get("WAIT_REPLY_S", "0.6"))
 
 # === Reporter ===

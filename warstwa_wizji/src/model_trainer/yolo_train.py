@@ -14,7 +14,7 @@ from yolo_dataset import YOLOWeightedDataset
 
 load_dotenv()
 if os.environ.get("USE_EXPERIMENTAL_BALANCER", "0") == "1":
-    print("!Using experimental balancer!")
+    print("!Używanie eksperymentalnego balancera!")
     dataset.YOLODataset = YOLOWeightedDataset
 
 from ultralytics.models import YOLO
@@ -55,12 +55,12 @@ class CVTrainer:
         val_files = image_files[:val_split]
 
         for img_file in val_files:
-            # Copy image
+            # Skopiuj obraz
             src_img = os.path.join(train_images_dir, img_file)
             dst_img = os.path.join(val_images_dir, img_file)
             shutil.copy2(src_img, dst_img)
 
-            # Copy corresponding label file
+            # Skopiuj odpowiadający plik etykiety
             label_file = os.path.splitext(img_file)[0] + '.txt'
             src_label = os.path.join(train_labels_dir, label_file)
             dst_label = os.path.join(val_labels_dir, label_file)
@@ -72,11 +72,11 @@ class CVTrainer:
     def train_yolo_model(self, epochs=200, batch_size=4, img_size=640, lr0=0.01):
         device = 0
 
-        # Define timestamp for unique model naming
+        # Zdefiniuj znacznik czasu dla unikalnego nazewnictwa modelu
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f'train_{timestamp}'
 
-        # Load the model
+        # Załaduj model
         try:
             model = YOLO(f"{self.base_model_name}.pt")
             model_type = self.base_model_name
@@ -88,7 +88,7 @@ class CVTrainer:
         # wandb.login(key=WANDB_API_KEY)
         # wandb.init(project=projectName, name=run_name, job_type='train')
         # add_wandb_callback(model, enable_model_checkpointing=True)
-        # Train the model
+        # Trenuj model
         augment_options = {
             "augment": self.augment,
             "translate": 0.1,
@@ -123,7 +123,7 @@ class CVTrainer:
             # classes=[i for i in range(24) if i not in [0, 2, 3, 4, 6, 11, 12, 14, 15, 16, 17, 19, 21, 22, 23]],
             **augment_options
         )
-        # Save the model
+        # Zapisz model
         model_save_path = os.path.join(model_save_dir, f"{model_type}_{timestamp}.pt")
 
         try:
@@ -149,7 +149,7 @@ class CVTrainer:
             classes=self.classes,
         )
 
-        # Calculate F1 score
+        # Oblicz wynik F1
         f1_score = 2 * metrics.box.p * metrics.box.r / (
                     metrics.box.p + metrics.box.r + 1e-6)
         print(f"F1 score: {f1_score}")
@@ -171,38 +171,38 @@ class CVTrainer:
 
         class_names = yaml_data.get('names', ['Unknown'])
 
-        # Process a subset of images for visualization
+        # Przetwórz podzbiór obrazów do wizualizacji
         viz_images = image_files[:min(10, len(image_files))]
 
         for img_file in viz_images:
             img_path = os.path.join(test_images_dir, img_file)
 
-            # Run inference
+            # Uruchom wnioskowanie
             results = model(img_path, conf=conf_threshold)
 
-            # Get original image for visualization
+            # Pobierz oryginalny obraz do wizualizacji
             img = cv2.imread(img_path)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            # Draw boxes on image
+            # Narysuj ramki na obrazie
             for box in results[0].boxes:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
                 conf = box.conf[0].item()
                 cls = int(box.cls[0].item())
 
-                # Get class name
-                class_name = class_names[cls] if cls < len(class_names) else f"Unknown-{cls}"
+                # Pobierz nazwę klasy
+                class_name = class_names[cls] if cls < len(class_names) else f"Nieznana-{cls}"
 
-                # Generate a unique color for each class
+                # Wygeneruj unikalny kolor dla każdej klasy
                 color = ((cls * 70) % 256, (cls * 50) % 256, (cls * 30) % 256)
                 cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
 
-                # Add label
+                # Dodaj etykietę
                 label = f"{class_name}: {conf:.2f}"
                 cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-            # Save annotated image
+            # Zapisz opisany obraz
             output_path = os.path.join(output_dir, img_file)
             plt.figure(figsize=(12, 12))
             plt.imshow(img)
@@ -214,7 +214,7 @@ class CVTrainer:
 
     def verify_dataset_structure(self):
         class_names = ['T-shirt', 'aifh', 'boy', 'cros', 'dress', 'girl', 'objects', 'shorts', 'skirt', 'sweater', 'trousers']
-        # Check if data.yaml exists and create if needed
+        # Sprawdź czy data.yaml istnieje i utwórz jeśli potrzeba
         if not os.path.exists(data_yaml_path):
             train_images_path = os.path.join(self.train_path, "images")
             val_images_path = os.path.join(self.val_path, "images")
@@ -231,7 +231,7 @@ class CVTrainer:
             with open(data_yaml_path, 'w') as f:
                 yaml.dump(yaml_data, f, default_flow_style=False)
 
-        # Count and verify images and labels
+        # Policz i zweryfikuj obrazy i etykiety
         train_images_dir = os.path.join(self.train_path, "images")
         train_labels_dir = os.path.join(self.train_path, "labels")
 

@@ -1,12 +1,12 @@
 """
-Comprehensive Unit Tests for EMMA Memory System
+Kompleksowe testy jednostkowe dla systemu pamięci EMMA
 
-Tests cover:
-1. mem0 Memory initialization
-2. Memory consolidation (storing facts)
-3. Memory retrieval (searching facts)
-4. Vector database integration (WAT knowledge)
-5. Full API integration flow
+Testy obejmują:
+1. Inicjalizację pamięci mem0
+2. Konsolidację pamięci (zapisywanie faktów)
+3. Pobieranie pamięci (wyszukiwanie faktów)
+4. Integrację bazy wektorowej (wiedza WAT)
+5. Pełny przepływ integracji API
 """
 import pytest
 import time
@@ -23,48 +23,48 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Test Configuration
 # =============================================================================
 API_BASE_URL = "http://localhost:8000/api1"
-TEST_USER_ID = f"test_user_{int(time.time())}"  # Unique user for each test run
+TEST_USER_ID = f"test_user_{int(time.time())}"  # Unikalny użytkownik dla każdego uruchomienia testu
 
 
 # =============================================================================
-# Unit Tests - mem0 Module
+# Testy Jednostkowe - Moduł mem0
 # =============================================================================
 class TestMem0Initialization:
-    """Tests for mem0 memory initialization."""
+    """Testy dla inicjalizacji pamięci mem0."""
     
     def test_memory_import(self):
-        """Test that mem0 can be imported."""
+        """Sprawdź czy mem0 może zostać zaimportowane."""
         from mem0 import Memory
         assert Memory is not None
     
     def test_emma_module_import(self):
-        """Test that emma module can be imported."""
+        """Sprawdź czy moduł emma może zostać zaimportowany."""
         from src.emma import retrieve_relevant_memories, consolidate_memory
         assert retrieve_relevant_memories is not None
         assert consolidate_memory is not None
     
     def test_memory_instance_creation(self):
-        """Test that memory instance can be created."""
+        """Sprawdź czy instancja pamięci może zostać utworzona."""
         from src.emma import _get_memory
         memory = _get_memory()
         assert memory is not None
 
 
 class TestMemoryConsolidation:
-    """Tests for memory consolidation (storing facts)."""
+    """Testy dla konsolidacji pamięci (zapisywanie faktów)."""
     
     def test_consolidate_simple_fact(self):
-        """Test storing a simple fact about the user."""
+        """Przetestuj zapisywanie prostego faktu o użytkowniku."""
         from src.emma import consolidate_memory
         
         user_input = "My name is TestUser for unit testing."
         ai_response = "Nice to meet you, TestUser! I'll remember that."
         
-        # Should not raise any exceptions
+        # Nie powinno rzucać żadnych wyjątków
         consolidate_memory(TEST_USER_ID, user_input, ai_response)
     
     def test_consolidate_multiple_facts(self):
-        """Test storing multiple facts in one conversation."""
+        """Przetestuj zapisywanie wielu faktów w jednej rozmowie."""
         from src.emma import consolidate_memory
         
         user_input = "I am 25 years old and I work as a software engineer."
@@ -73,19 +73,19 @@ class TestMemoryConsolidation:
         consolidate_memory(TEST_USER_ID, user_input, ai_response)
     
     def test_consolidate_with_empty_input(self):
-        """Test that empty inputs don't crash the system."""
+        """Przetestuj czy puste wejścia nie powodują awarii systemu."""
         from src.emma import consolidate_memory
         
-        # Should handle gracefully
+        # Powinno obsłużyć to poprawnie
         consolidate_memory(TEST_USER_ID, "", "")
 
 
 class TestMemoryRetrieval:
-    """Tests for memory retrieval (searching facts)."""
+    """Testy dla pobierania pamięci (wyszukiwanie faktów)."""
     
     @pytest.fixture(autouse=True)
     def setup_memory(self):
-        """Setup: Store some memories before retrieval tests."""
+        """Setup: Zapisz pewne wspomnienia przed testami pobierania."""
         from src.emma import consolidate_memory
         
         # Store a known fact
@@ -94,30 +94,30 @@ class TestMemoryRetrieval:
             "Remember that my favorite color is blue.",
             "I'll remember that your favorite color is blue!"
         )
-        # Give mem0 time to process
+        # Daj mem0 czas na przetworzenie
         time.sleep(2)
     
     def test_retrieve_existing_memory(self):
-        """Test retrieving a previously stored memory."""
+        """Przetestuj pobieranie wcześniej zapisanego wspomnienia."""
         from src.emma import retrieve_relevant_memories
         
         result = retrieve_relevant_memories(TEST_USER_ID, "What is my favorite color?")
         
-        # Result should be a string
+        # Wynik powinien być ciągiem znaków
         assert isinstance(result, str)
     
     def test_retrieve_no_memories_for_new_user(self):
-        """Test that new users have no memories."""
+        """Przetestuj czy nowi użytkownicy nie mają wspomnień."""
         from src.emma import retrieve_relevant_memories
         
         new_user_id = f"new_user_{int(time.time())}"
         result = retrieve_relevant_memories(new_user_id, "What do you know about me?")
         
-        # Should return empty string for new user
+        # Powinno zwrócić pusty ciąg dla nowego użytkownika
         assert result == ""
     
     def test_retrieve_with_limit(self):
-        """Test memory retrieval with custom limit."""
+        """Przetestuj pobieranie pamięci z niestandardowym limitem."""
         from src.emma import retrieve_relevant_memories
         
         result = retrieve_relevant_memories(TEST_USER_ID, "Tell me about myself", n_results=5)
@@ -126,20 +126,20 @@ class TestMemoryRetrieval:
 
 
 # =============================================================================
-# Unit Tests - Vector Database (WAT Knowledge)
+# Testy Jednostkowe - Baza Wektorowa (Wiedza WAT)
 # =============================================================================
 class TestVectorDatabase:
-    """Tests for ChromaDB vector database with WAT knowledge."""
+    """Testy dla bazy wektorowej ChromaDB z wiedzą WAT."""
     
     def test_vectordb_import(self):
-        """Test that vectordb module can be imported."""
+        """Sprawdź czy moduł vectordb może zostać zaimportowany."""
         from src.vectordb import vector_search, search_memory, add_memory
         assert vector_search is not None
         assert search_memory is not None
         assert add_memory is not None
     
     def test_vector_search_wat_info(self):
-        """Test searching for WAT university information."""
+        """Przetestuj wyszukiwanie informacji o uniwersytecie WAT."""
         from src.vectordb import vector_search
         
         result = vector_search("Ile wydziałów ma WAT?")
@@ -149,18 +149,18 @@ class TestVectorDatabase:
         assert len(result.documents) > 0
     
     def test_vector_search_returns_relevant_results(self):
-        """Test that vector search returns relevant results for WAT queries."""
+        """Przetestuj czy wyszukiwanie wektorowe zwraca istotne wyniki dla zapytań o WAT."""
         from src.vectordb import vector_search
         
         result = vector_search("Kiedy powstała Wojskowa Akademia Techniczna?")
         
         assert result is not None
-        # Check that documents contain some text
+        # Sprawdź czy dokumenty zawierają jakiś tekst
         documents = result.documents
         assert any(len(doc) > 0 for doc in documents)
     
     def test_search_memory_function(self):
-        """Test the search_memory function."""
+        """Przetestuj funkcję search_memory."""
         from src.vectordb import search_memory
         
         result = search_memory("studenci WAT", n_results=3)
@@ -170,18 +170,18 @@ class TestVectorDatabase:
 
 
 # =============================================================================
-# Integration Tests - Full API Flow
+# Testy Integracyjne - Pełny Przepływ API
 # =============================================================================
 class TestAPIIntegration:
-    """Integration tests for the full API with memory system."""
+    """Testy integracyjne dla pełnego API z systemem pamięci."""
     
     @pytest.fixture
     def api_session(self):
-        """Create a session for API requests."""
+        """Utwórz sesję dla zapytań API."""
         return requests.Session()
     
     def test_api_health(self, api_session):
-        """Test that the API is running."""
+        """Sprawdź czy API działa."""
         try:
             response = api_session.get(f"{API_BASE_URL.replace('/api1', '')}/docs")
             assert response.status_code == 200
@@ -189,9 +189,9 @@ class TestAPIIntegration:
             pytest.skip("API not running - start with: python -m src.main")
     
     def test_api_process_question_with_name(self, api_session):
-        """Test API processes question and stores user name."""
+        """Przetestuj przetwarzanie pytania przez API i zapisywanie imienia użytkownika."""
         try:
-            # Send first message with name
+            # Wyślij pierwszą wiadomość z imieniem
             response = api_session.post(
                 f"{API_BASE_URL}/process_question",
                 json={"content": "Nazywam się TestAPI i lubię programować."}
@@ -207,9 +207,9 @@ class TestAPIIntegration:
             pytest.skip("API not running")
     
     def test_api_memory_recall(self, api_session):
-        """Test that API can recall previously stored information."""
+        """Przetestuj czy API potrafi przypomnieć sobie wcześniej zapisane informacje."""
         try:
-            # First, store some information
+            # Najpierw zapisz pewne informacje
             response1 = api_session.post(
                 f"{API_BASE_URL}/process_question",
                 json={"content": "Moje imię to MemoryTestUser123."}
@@ -218,10 +218,10 @@ class TestAPIIntegration:
             if response1.status_code != 200:
                 pytest.skip("API not available")
             
-            # Wait for memory consolidation
+            # Poczekaj na konsolidację pamięci
             time.sleep(3)
             
-            # Try to recall the name
+            # Spróbuj przypomnieć sobie imię
             response2 = api_session.post(
                 f"{API_BASE_URL}/process_question",
                 json={"content": "Jak mam na imię?"}
@@ -235,7 +235,7 @@ class TestAPIIntegration:
             pytest.skip("API not running")
     
     def test_api_wat_knowledge(self, api_session):
-        """Test that API can answer questions about WAT."""
+        """Przetestuj czy API potrafi odpowiadać na pytania o WAT."""
         try:
             response = api_session.post(
                 f"{API_BASE_URL}/process_question",
@@ -247,34 +247,34 @@ class TestAPIIntegration:
             
             data = response.json()
             assert "answer" in data
-            # WAT has 7 faculties
+            # WAT ma 7 wydziałów
             answer = data["answer"].lower()
-            # Check if response contains relevant information
-            assert len(answer) > 10  # Non-empty response
+            # Sprawdź czy odpowiedź zawiera istotne informacje
+            assert len(answer) > 10  # Odpowiedź niepusta
             
         except requests.ConnectionError:
             pytest.skip("API not running")
 
 
 # =============================================================================
-# Performance Tests
+# Testy Wydajności
 # =============================================================================
 class TestPerformance:
-    """Performance tests for memory operations."""
+    """Testy wydajności dla operacji pamięci."""
     
     def test_memory_retrieval_speed(self):
-        """Test that memory retrieval completes in reasonable time."""
+        """Przetestuj czy pobieranie pamięci kończy się w rozsądnym czasie."""
         from src.emma import retrieve_relevant_memories
         
         start_time = time.time()
         retrieve_relevant_memories(TEST_USER_ID, "What do you know about me?")
         elapsed_time = time.time() - start_time
         
-        # Should complete within 10 seconds (including API calls)
-        assert elapsed_time < 10, f"Memory retrieval took {elapsed_time:.2f}s"
+        # Powinno zakończyć się w ciągu 10 sekund (wliczając wywołania API)
+        assert elapsed_time < 10, f"Pobieranie pamięci zajęło {elapsed_time:.2f}s"
     
     def test_memory_consolidation_speed(self):
-        """Test that memory consolidation completes in reasonable time."""
+        """Przetestuj czy konsolidacja pamięci kończy się w rozsądnym czasie."""
         from src.emma import consolidate_memory
         
         start_time = time.time()
@@ -285,49 +285,49 @@ class TestPerformance:
         )
         elapsed_time = time.time() - start_time
         
-        # Should complete within 15 seconds
-        assert elapsed_time < 15, f"Memory consolidation took {elapsed_time:.2f}s"
+        # Powinno zakończyć się w ciągu 15 sekund
+        assert elapsed_time < 15, f"Konsolidacja pamięci zajęła {elapsed_time:.2f}s"
 
 
 # =============================================================================
-# Edge Case Tests
+# Testy Przypadków Brzegowych
 # =============================================================================
 class TestEdgeCases:
-    """Tests for edge cases and error handling."""
+    """Testy przypadków brzegowych i obsługi błędów."""
     
     def test_unicode_characters(self):
-        """Test handling of unicode characters (Polish)."""
+        """Przetestuj obsługę znaków Unicode (polski)."""
         from src.emma import consolidate_memory, retrieve_relevant_memories
         
         polish_input = "Mieszkam w Warszawie i studiuję na WAT. Moje imię to Paweł."
         polish_response = "Świetnie! Zapamiętam, że mieszkasz w Warszawie."
         
-        # Should not raise exceptions
+        # Nie powinno rzucać wyjątków
         consolidate_memory(TEST_USER_ID, polish_input, polish_response)
     
     def test_very_long_input(self):
-        """Test handling of very long inputs."""
+        """Przetestuj obsługę bardzo długich danych wejściowych."""
         from src.emma import consolidate_memory
         
         long_input = "Test " * 500  # ~2500 characters
         long_response = "Response " * 300
         
-        # Should handle gracefully (may truncate internally)
+        # Powinno obsłużyć to poprawnie (może wewnętrznie przyciąć)
         consolidate_memory(TEST_USER_ID, long_input, long_response)
     
     def test_special_characters(self):
-        """Test handling of special characters."""
+        """Przetestuj obsługę znaków specjalnych."""
         from src.emma import consolidate_memory
         
         special_input = "My email is test@example.com and I like $100 bills! <script>alert('xss')</script>"
         special_response = "I'll remember your email."
         
-        # Should not crash
+        # Nie powinno się zawiesić
         consolidate_memory(TEST_USER_ID, special_input, special_response)
 
 
 # =============================================================================
-# Main Test Runner
+# Główny Program Testowy
 # =============================================================================
 if __name__ == "__main__":
     print("=" * 60)
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print()
     
-    # Check if API is running
+    # Sprawdź czy API działa
     try:
         requests.get("http://localhost:8000/docs", timeout=2)
         print("✓ API is running at http://localhost:8000")
@@ -349,7 +349,7 @@ if __name__ == "__main__":
         __file__,
         "-v",
         "--tb=short",
-        "-x",  # Stop on first failure
+        "-x",  # Zatrzymaj na pierwszym błędzie
         "--color=yes"
     ])
     

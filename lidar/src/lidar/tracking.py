@@ -1,575 +1,360 @@
-from __future__ import annotations
+import math
+import uuid
+import time
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Dict, Optional
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from src.config import (
     TRACK_MAX_MATCH_DISTANCE_M,
-    TRACK_MAX_MISSED,
-    TRACK_MIN_MOVING_SPEED_M_S,
-    TRACK_REID_MAX_AGE_S,
-    TRACK_REID_MAX_DISTANCE_M,
-    TRACK_POS_ALPHA,
-    TRACK_VEL_ALPHA,
-    TRACK_MIN_CONFIRM_HITS,
-    TRACK_MAX_MISSED_TENTATIVE,
-    TRACK_RAW_VEL_MIN_SPEED_M_S,
-    TRACK_PREDICTION_HORIZON_S,
-    TRACK_PREDICTION_STEP_S,
-    TRACK_PREDICTION_BASE_UNCERTAINTY_M,
-    TRACK_PREDICTION_GROWTH_UNCERTAINTY,
-    TRACK_PREDICTION_MAX_SPEED_FOR_UNCERTAINTY,
-    TRACK_MOTION_ZONE_RADIUS_M,
+    TRACK_MAX_PREDICTION_ERROR_M,
+    TRACK_INIT_STEPS,
+    TRACK_CONFIRM_STEPS,
+    TRACK_DELETE_MISSED_READINGS,
+    TRACK_DT_S,
+    TRACK_VELOCITY_DECAY,
+    TRACK_ALPHA,
+    TRACK_BETA,
 )
-
+from .segmentation import Segment, BeamCategory
 
 @dataclass
 class HumanTrack:
     """
-    Reprezentuje śledzony obiekt (potencjalnie człowieka) w czasie.
-    
-    Przechowuje historię pozycji, wektor prędkości oraz stan (potwierdzony/niepotwierdzony).
-    Zapewnia metody do predykcji przyszłej pozycji.
+    Reprezentacja śledzonego człowieka.
     
     Atrybuty:
-        id (int): Unikalny identyfikator śladu.
-        type (str): Typ obiektu (domyślnie "Human").
-        history (List[Tuple]): Historia pozycji (czas, x, y).
-        last_position (Tuple): Ostatnia znana pozycja (x, y).
-        last_update_time (float): Czas ostatniej aktualizacji.
-        missed_count (int): Liczba skanów bez dopasowania detekcji.
-        vx (float): Prędkość w osi X [m/s].
-        vy (float): Prędkość w osi Y [m/s].
-        hits_count (int): Liczba udanych aktualizacji.
-        confirmed (bool): Czy ślad jest stabilny i potwierdzony.
-    
+        id (str): Unikalne UUID śladu.
+        x (float): Pozycja X po filtracji.
+        y (float): Pozycja Y po filtracji.
+        vx (float): Prędkość X.
+        vy (float): Prędkość Y.
+        state (str): Stan śladu: "init", "confirmed", "archived", "deleted".
+        missed_frames (int): Liczba kolejnych skanów bez dopasowania wykrycia.
+        matched_frames (int): Liczba kolejnych skanów z dopasowaniem.
+        age (float): Czas od utworzenia śladu (sekundy).
+        last_update_time (float): Znacznik czasu ostatniej aktualizacji.
+        history (List[Tuple[float, float, float]]): Historia pozycji (czas, x, y).
+        
     Hierarchia wywołań:
-        Tworzony przez: HumanTracker._create_track()
-        Używany w: HumanTracker, system.py, Live_Vis_v3.py
+        lidar/src/lidar/tracking.py -> HumanTracker.initialize_new_track() -> HumanTrack()
     """
-    # Track śledzonej osoby w układzie świata
-    id: int
-    type: str = "Human"
-
-    history: List[Tuple[float, float, float]] = field(default_factory=list)  # (t, x, y)
-    last_position: Tuple[float, float] = (0.0, 0.0)
-    last_update_time: float = 0.0
-
-    missed_count: int = 0          # kolejne skany bez dopasowania
-    vx: float = 0.0                # prędkość w osi X [m/s]
-    vy: float = 0.0                # prędkość w osi Y [m/s]
-    hits_count: int = 1            # ile razy track był zaktualizowany
-    confirmed: bool = False        # czy track jest potwierdzony
-
-    @property
-    def x(self) -> float:
-        return float(self.last_position[0])
-
-    @property
-    def y(self) -> float:
-        return float(self.last_position[1])
-
-    @property
-    def speed(self) -> float:
-        # moduł prędkości [m/s]
-        return float(np.hypot(self.vx, self.vy))
-
-    @property
-    def heading_rad(self) -> float:
-        # kierunek ruchu [rad], 0 = oś X, CCW
-        if self.speed < 1e-6:
-            return 0.0
-        return float(np.arctan2(self.vy, self.vx))
-
-    @property
-    def age(self) -> int:
-        # liczba aktualizacji (długość historii)
-        return len(self.history)
-
-    @property
-    def is_active(self) -> bool:
-        # aktywne są tylko tracki potwierdzone i nieprzegapione zbyt długo
-        return self.confirmed and self.missed_count <= TRACK_MAX_MISSED
-
-    @property
-    def is_moving(self) -> bool:
-        # obiekt uznajemy za ruchomy dopiero od pewnej prędkości
-        return self.speed >= TRACK_MIN_MOVING_SPEED_M_S
-
-    # ---------- predykcja ----------
-
-    def predict_position(self, t: float) -> Tuple[float, float]:
-        """
-        Przewiduje pozycję obiektu w zadanym czasie t.
-        
-        Zakłada ruch jednostajny prostoliniowy z aktualną prędkością (vx, vy).
-        
-        Argumenty:
-            t (float): Docelowy czas predykcji.
-            
-        Zwraca:
-            Tuple[float, float]: Przewidywana pozycja (x, y).
-            
-        Hierarchia wywołań:
-            tracking.py -> HumanTracker._find_best_match() -> HumanTrack.predict_position()
-            tracking.py -> HumanTracker._find_best_archived_match() -> HumanTrack.predict_position()
-        """
-        # predykcja pozycji przy stałej prędkości w chwili t
-        t = float(t)
-        dt = t - float(self.last_update_time)
-        if dt <= 0.0:
-            return self.last_position
-        px = self.x + self.vx * dt
-        py = self.y + self.vy * dt
-        return float(px), float(py)
-
-    def predict_future_points(
-        self,
-        t_start: float,
-        horizon_s: float = TRACK_PREDICTION_HORIZON_S,
-        step_s: float = TRACK_PREDICTION_STEP_S,
-    ) -> List[Tuple[float, float, float]]:
-        """
-        Generuje listę punktów przyszłej trajektorii.
-        
-        Argumenty:
-            t_start (float): Czas początkowy.
-            horizon_s (float): Horyzont czasowy predykcji w sekundach.
-            step_s (float): Krok czasowy w sekundach.
-            
-        Zwraca:
-            List[Tuple[float, float, float]]: Lista punktów (t, x, y).
-            
-        Hierarchia wywołań:
-            tracking.py -> HumanTracker.get_future_predictions() -> HumanTrack.predict_future_points()
-        """
-        # krótka trajektoria w przyszłość (t, x, y) przy stałej prędkości
-        t_start = float(t_start)
-        horizon_s = max(0.0, float(horizon_s))
-        step_s = max(1e-3, float(step_s))
-
-        if not self.is_moving or horizon_s <= 0.0:
-            return []
-
-        points: List[Tuple[float, float, float]] = []
-        n_steps = int(horizon_s / step_s) + 1
-
-        for i in range(1, n_steps + 1):
-            dt = step_s * i
-            t_pred = t_start + dt
-            x_pred = self.x + self.vx * dt
-            y_pred = self.y + self.vy * dt
-            points.append((float(t_pred), float(x_pred), float(y_pred)))
-
-        return points
-
-    def prediction_radius(
-        self,
-        dt: float,
-        base: float = TRACK_PREDICTION_BASE_UNCERTAINTY_M,
-        growth: float = TRACK_PREDICTION_GROWTH_UNCERTAINTY,
-        max_speed_for_uncertainty: float = TRACK_PREDICTION_MAX_SPEED_FOR_UNCERTAINTY,
-    ) -> float:
-        # prosty promień niepewności predykcji [m]
-        dt = max(0.0, float(dt))
-        v = min(self.speed, max_speed_for_uncertainty)
-        return float(base + growth * dt * (1.0 + v))
+    id: str
+    x: float
+    y: float
+    vx: float
+    vy: float
+    state: str  # "init", "confirmed", "archived", "deleted"
+    
+    missed_frames: int
+    matched_frames: int
+    
+    age: float
+    last_update_time: float
+    
+    # Historia pozycji: lista krotek (timestamp, x, y)
+    history: List[Tuple[float, float, float]] = field(default_factory=list)
 
 
 class HumanTracker:
     """
-    System wieloobiektowego śledzenia (Multi-Object Tracking).
+    Tracker wielo-obiektowy do wykrywania ludzi używający algorytmu Najbliższego Sąsiada / Węgierskiego.
     
-    Wykorzystuje algorytm Najbliższego Sąsiada (NN) z predykcją pozycji (model stałej prędkości)
-    oraz mechanizm re-identyfikacji obiektów po chwilowym zaniku (okluzji).
-    Obsługuje wygładzanie pozycji (alfa-beta filter) oraz zarządzanie cyklem życia śladu
-    (tworzenie, potwierdzanie, archiwizacja, usuwanie).
-    
-    Hierarchia wywołań:
-        system.py -> AiwataLidarSystem.__init__() -> HumanTracker()
+    Filtr: Alfa-Beta (uproszczony Kalman).
+    Cykl życia:
+      - init: Kandydat, zbieranie dowodów.
+      - confirmed: Potwierdzony obiekt, śledzony.
+      - archived: Utracony tymczasowo (pamięć).
+      - deleted: Usunięty z systemu.
     """
-    # Multi-target tracker z NN, predykcją, wygładzaniem i etapem potwierdzania
 
-    def __init__(
-        self,
-        max_match_distance: float = TRACK_MAX_MATCH_DISTANCE_M,
-        max_missed: float = TRACK_MAX_MISSED,
-        pos_alpha: float = TRACK_POS_ALPHA,
-        vel_alpha: float = TRACK_VEL_ALPHA,
-        min_confirm_hits: int = TRACK_MIN_CONFIRM_HITS,
-        max_missed_tentative: int = TRACK_MAX_MISSED_TENTATIVE,
-    ):
-        # max_match_distance    - maks. dystans dopasowania [m]
-        # max_missed            - ile skanów można "zgubić" potwierdzony track
-        # pos_alpha, vel_alpha  - wagi wygładzania pozycji i prędkości
-        # min_confirm_hits      - ile aktualizacji zanim track będzie potwierdzony
-        # max_missed_tentative  - ile skanów może przeżyć niepotwierdzony track
-        self.max_match_distance = float(max_match_distance)
-        self.max_missed_confirmed = int(max_missed)
-        self.max_missed_tentative = int(max_missed_tentative)
-        self.pos_alpha = float(pos_alpha)
-        self.vel_alpha = float(vel_alpha)
-        self.min_confirm_hits = int(min_confirm_hits)
-
-        self.tracks: List[HumanTrack] = []
-        self._next_id: int = 1
-
-        # archiwum "uśpionych" tracków do re-identyfikacji
-        self.archived_tracks: List[HumanTrack] = []
-
-        # promień strefy ruchu
-        self.motion_zone_radius = float(TRACK_MOTION_ZONE_RADIUS_M)
-
-    # --- pomocnicze ---
-
-    def _create_track(self, t: float, x: float, y: float) -> HumanTrack:
+    def __init__(self):
         """
-        Tworzy nową instancję śledzonego obiektu (HumanTrack).
+        Inicjalizuje Tracker Ludzi.
         
-        Inicjalizuje historię pozycji, czas ostatniej aktualizacji oraz liczniki jakości śledzenia.
-        Nowy track jest początkowo niepotwierdzony (confirmed=False).
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.__init__() -> HumanTracker()
+        """
+        self.tracks: List[HumanTrack] = []
+        self.archived_tracks: List[HumanTrack] = []
+        
+        # opcjonalny licznik ID (obecnie używamy UUID)
+        self._id_counter = 0
+
+    def predict_future_position(self, track: HumanTrack, dt: float) -> Tuple[float, float]:
+        """
+        Przewiduje pozycję po czasie dt na podstawie obecnej prędkości.
         
         Argumenty:
-            t (float): Czas utworzenia (timestamp).
-            x (float): Pozycja początkowa X.
-            y (float): Pozycja początkowa Y.
+            track (HumanTrack): Ślad do przewidzenia.
+            dt (float): Krok czasowy w sekundach.
             
         Zwraca:
-            HumanTrack: Nowy obiekt tracka.
+            Tuple[float, float]: Przewidziane (x, y).
             
         Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._create_track()
+            lidar/src/lidar/tracking.py -> HumanTracker.compute_cost_matrix() -> predict_future_position()
+            lidar/src/lidar/tracking.py -> HumanTracker.predict_track_state() -> predict_future_position()
         """
-        # tworzy nowy, jeszcze niepotwierdzony track
-        t = float(t)
-        xf = float(x)
-        yf = float(y)
+        pred_x = track.x + track.vx * dt
+        pred_y = track.y + track.vy * dt
+        return pred_x, pred_y
 
-        track = HumanTrack(
-            id=self._next_id,
-            type="Human",
-            history=[(t, xf, yf)],
-            last_position=(xf, yf),
-            last_update_time=t,
-            missed_count=0,
+    def initialize_new_track(self, segment: Segment) -> HumanTrack:
+        """
+        Tworzy nowy track na podstawie segmentu.
+        
+        Argumenty:
+            segment (Segment): Segment sklasyfikowany jako HUMAN.
+            
+        Zwraca:
+            HumanTrack: Nowy obiekt tracka w stanie 'init'.
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/tracking.py -> HumanTracker.update_tracker() -> initialize_new_track()
+        """
+        # Utwórz nowy track
+        self._id_counter += 1
+        now = time.time()
+        new_track = HumanTrack(
+            id=str(uuid.uuid4())[:8],
+            x=segment.center_x,
+            y=segment.center_y,
             vx=0.0,
             vy=0.0,
-            hits_count=1,
-            confirmed=(self.min_confirm_hits <= 1),
+            state="init",
+            missed_frames=0,
+            matched_frames=1,
+            age=0.0,
+            last_update_time=now,
+            history=[(now, segment.center_x, segment.center_y)]
         )
-        self._next_id += 1
-        self.tracks.append(track)
-        return track
+        return new_track
 
-    def _find_best_match(self, x: float, y: float, t: float) -> Optional[HumanTrack]:
+    def predict_track_state(self, track: HumanTrack, dt: float):
         """
-        Znajduje najlepiej pasujący aktywny track do zadanego punktu pomiarowego.
-        
-        Wykorzystuje predykcję pozycji tracków na czas 't' i oblicza odległość euklidesową.
-        Zwraca track o najmniejszym dystansie, jeśli jest mniejszy niż max_match_distance.
+        Aktualizuje stan tracka (x, y) na podstawie modelu predykcji (krok predykcji filtra Alfa-Beta).
         
         Argumenty:
-            x (float): Współrzędna X punktu pomiarowego.
-            y (float): Współrzędna Y punktu pomiarowego.
-            t (float): Czas pomiaru.
-            
-        Zwraca:
-            Optional[HumanTrack]: Znaleziony track lub None.
+            track (HumanTrack): Track do przewidzenia.
+            dt (float): Delta czasu.
             
         Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._find_best_match()
+            lidar/src/lidar/tracking.py -> HumanTracker.update_tracker() -> predict_track_state()
         """
-        # zwraca najbliższy track względem predykowanej pozycji
-        xf = float(x)
-        yf = float(y)
-        t = float(t)
-
-        best_track: Optional[HumanTrack] = None
-        best_dist = self.max_match_distance
-
-        for tr in self.tracks:
-            # track może być zarówno potwierdzony, jak i nie
-            px, py = tr.predict_position(t)
-            dx = xf - px
-            dy = yf - py
-            d = float(np.hypot(dx, dy))
-
-            if d < best_dist:
-                best_dist = d
-                best_track = tr
-
-        return best_track
-
-    def _is_in_motion_zone(self, x: float, y: float) -> bool:
-        """
-        Sprawdza, czy punkt znajduje się w zdefiniowanej strefie ruchu.
+        # Predykcja filtra Alfa-Beta
+        track.x += track.vx * dt
+        track.y += track.vy * dt
         
-        Argumenty:
-            x (float): Współrzędna X.
-            y (float): Współrzędna Y.
-            
-        Zwraca:
-            bool: True jeśli punkt jest w zasięgu promienia strefy ruchu.
-            
-        Hierarchia wywołań:
-            tracking.py -> HumanTracker (różne metody) -> HumanTracker._is_in_motion_zone()
-        """
-        """Zwraca True, jeśli (x,y) leży w strefie ruchu (prosty okrąg)."""
-        return float(np.hypot(x, y)) <= self.motion_zone_radius
-
-    def _update_track_state(
-        self,
-        track: HumanTrack,
-        t: float,
-        meas_x: float,
-        meas_y: float,
-    ) -> None:
-        """
-        Aktualizuje stan (pozycję, prędkość/filtr Kalmana uproszczony) wybranego tracka.
+        # Zanik prędkości (tarcie)
+        track.vx *= TRACK_VELOCITY_DECAY
+        track.vy *= TRACK_VELOCITY_DECAY
         
-        Stosuje filtr alfa-beta do wygładzania pozycji i prędkości. 
-        Zarządza logiką potwierdzania tracka (hits_count).
+        track.age += dt
+
+    def update_existing_track(self, track: HumanTrack, segment: Segment, dt: float):
+        """
+        Krok korekcji filtra Alfa-Beta przy użyciu pomiaru (segmentu).
         
         Argumenty:
             track (HumanTrack): Track do zaktualizowania.
-            t (float): Czas aktualizacji.
-            meas_x (float): Zmierzona pozycja X.
-            meas_y (float): Zmierzona pozycja Y.
+            segment (Segment): Dopasowany pomiar.
+            dt (float): Delta czasu.
             
         Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._update_track_state()
+            lidar/src/lidar/tracking.py -> HumanTracker.update_tracker() -> update_existing_track()
         """
-        # aktualizacja pozycji i prędkości tracka
-        t = float(t)
-        mx = float(meas_x)
-        my = float(meas_y)
-
-        dt = t - float(track.last_update_time)
-        if dt <= 1e-6:
-            track.last_position = (mx, my)
-            track.last_update_time = t
-            track.history.append((t, mx, my))
-            track.missed_count = 0
-            track.hits_count += 1
-            if not track.confirmed and track.hits_count >= self.min_confirm_hits:
-                track.confirmed = True
-            return
-
-        raw_vx = (mx - track.x) / dt
-        raw_vy = (my - track.y) / dt
-
-        # minimalna prędkość, żeby tłumić drobny szum
-        raw_speed = float(np.hypot(raw_vx, raw_vy))
-        if raw_speed < TRACK_RAW_VEL_MIN_SPEED_M_S:
-            raw_vx = 0.0
-            raw_vy = 0.0
-
-        track.vx = (1.0 - self.vel_alpha) * track.vx + self.vel_alpha * raw_vx
-        track.vy = (1.0 - self.vel_alpha) * track.vy + self.vel_alpha * raw_vy
-
-        new_x = (1.0 - self.pos_alpha) * track.x + self.pos_alpha * mx
-        new_y = (1.0 - self.pos_alpha) * track.y + self.pos_alpha * my
-
-        track.last_position = (float(new_x), float(new_y))
-        track.last_update_time = t
-        track.history.append((t, float(new_x), float(new_y)))
-        track.missed_count = 0
-        track.hits_count += 1
-
-        if not track.confirmed and track.hits_count >= self.min_confirm_hits:
-            track.confirmed = True
-
-    def _archive_track(self, track: HumanTrack) -> None:
-        """
-        Przenosi track do archiwum zamiast go usuwać.
+        # Residuum (błąd predykcji)
+        rx = segment.center_x - track.x
+        ry = segment.center_y - track.y
         
-        Umożliwia późniejszą re-identyfikację, jeśli obiekt pojawi się ponownie.
+        # Aktualizacja pozycji
+        track.x += TRACK_ALPHA * rx
+        track.y += TRACK_ALPHA * ry
+        
+        # Aktualizacja prędkości
+        if dt > 0:
+            track.vx += (TRACK_BETA * rx) / dt
+            track.vy += (TRACK_BETA * ry) / dt
+
+        # Aktualizacja metadanych
+        track.matched_frames += 1
+        track.missed_frames = 0
+        track.last_update_time = time.time()
+        
+        # Dodanie do historii
+        track.history.append((track.last_update_time, track.x, track.y))
+        
+        # Logika zmiany stanu
+        if track.state == "init" and track.matched_frames >= TRACK_INIT_STEPS:
+            track.state = "confirmed"
+        elif track.state == "archived":
+            track.state = "confirmed"
+
+    def compute_cost_matrix(self, tracks: List[HumanTrack], detections: List[Segment]) -> np.ndarray:
+        """
+        Oblicza macierz kosztów (odległości) między trackami a detekcjami.
         
         Argumenty:
-            track (HumanTrack): Track do zarchiwizowania.
-            
-        Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._archive_track()
-        """
-        # przenosi track do archiwum zamiast całkowitego usunięcia
-        self.archived_tracks.append(track)
-
-    def _prune_archive(self, t: float) -> None:
-        """
-        Usuwa z archiwum tracki, które przekroczyły maksymalny czas życia w archiwum.
-        
-        Argumenty:
-            t (float): Aktualny czas.
-            
-        Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._prune_archive()
-        """
-        # usuwa z archiwum tracki, które są za stare
-        t = float(t)
-        fresh: List[HumanTrack] = []
-        for tr in self.archived_tracks:
-            age_s = t - float(tr.last_update_time)
-            if age_s <= TRACK_REID_MAX_AGE_S:
-                fresh.append(tr)
-        self.archived_tracks = fresh
-
-    def _find_best_archived_match(
-            self,
-            x: float,
-            y: float,
-            t: float,
-    ) -> Optional[HumanTrack]:
-        """
-        Próbuje dopasować punkt pomiarowy do tracków znajdujących się w archiwum (Re-ID).
-        
-        Sprawdza zarówno pozycję predykowaną jak i ostatnią znaną pozycję.
-        
-        Argumenty:
-            x (float): Zmierzona pozycja X.
-            y (float): Zmierzona pozycja Y.
-            t (float): Czas pomiaru.
+            tracks (List[HumanTrack]): Lista aktywnych tracków.
+            detections (List[Segment]): Lista nowych detekcji (segmentów).
             
         Zwraca:
-            Optional[HumanTrack]: Dopasowany archiwalny track lub None.
+            np.ndarray: Macierz odległości (len(tracks) x len(detections)).
             
         Hierarchia wywołań:
-            tracking.py -> HumanTracker.update() -> HumanTracker._find_best_archived_match()
+            lidar/src/lidar/tracking.py -> HumanTracker.associate_detections_to_tracks() -> compute_cost_matrix()
         """
-        xf = float(x)
-        yf = float(y)
-        t = float(t)
-
-        best_tr: Optional[HumanTrack] = None
-        best_dist = TRACK_REID_MAX_DISTANCE_M
-
-        for tr in self.archived_tracks:
-            # pozycja predykowana w chwili t
-            px, py = tr.predict_position(t)
-            d_pred = float(np.hypot(xf - px, yf - py))
-
-            # ostatnia znana pozycja z historii
-            _, lx, ly = tr.history[-1]
-            d_last = float(np.hypot(xf - lx, yf - ly))
-
-            # bierzemy lepszą z dwóch odległości
-            d = min(d_pred, d_last)
-
-            if d < best_dist:
-                best_dist = d
-                best_tr = tr
-
-        return best_tr
-
-    # --- API trackera ---
-
-    def update(self, detections: List[Tuple[float, float]], t: float) -> List[HumanTrack]:
-        """
-        Aktualizuje stan trackera na podstawie nowych detekcji.
+        n_tracks = len(tracks)
+        n_dets = len(detections)
+        cost_matrix = np.zeros((n_tracks, n_dets))
         
-        Główna pętla algorytmu śledzenia:
-        1. Czyszczenie archiwum ze starych śladów.
-        2. Dopasowanie detekcji do aktywnych śladów (Najbliższy Sąsiad).
-        3. Dopasowanie pozostałych detekcji do śladów w archiwum (re-id).
-        4. Utworzenie nowych śladów dla niedopasowanych detekcji.
-        5. Aktualizacja liczników (missed/hits) i zarządzanie cyklem życia (archiwizacja).
+        for i, trk in enumerate(tracks):
+            # Predykcja dla obecnego czasu jest już zrobiona w predict_track_state
+            for j, det in enumerate(detections):
+                dist = np.hypot(trk.x - det.center_x, trk.y - det.center_y)
+                
+                # Bramkowanie (Gating)
+                if dist > TRACK_MAX_MATCH_DISTANCE_M:
+                    cost_matrix[i, j] = 1000.0  # Duża liczba
+                else:
+                    cost_matrix[i, j] = dist
+                    
+        return cost_matrix
+
+    def associate_detections_to_tracks(
+        self, 
+        tracks: List[HumanTrack], 
+        detections: List[Segment]
+    ) -> Tuple[List[Tuple[int, int]], List[int], List[int]]:
+        """
+        Dopasowuje detekcje do tracków używając algorytmu Węgierskiego.
         
         Argumenty:
-            detections (List[Tuple[float, float]]): Lista wykrytych pozycji (x, y).
-            t (float): Czas aktualnego skanu.
+            tracks (List[HumanTrack]): Predykcje.
+            detections (List[Segment]): Pomiary.
             
         Zwraca:
-            List[HumanTrack]: Lista aktualnie aktywnych śladów.
+            matches (List[Tuple[int, int]]): Indeksy par (track_idx, det_idx).
+            unmatched_tracks (List[int]): Indeksy tracków bez dopasowania.
+            unmatched_detections (List[int]): Indeksy detekcji bez dopasowania.
             
         Hierarchia wywołań:
-            system.py -> AiwataLidarSystem.process_scan() -> HumanTracker.update()
+            lidar/src/lidar/tracking.py -> HumanTracker.update_tracker() -> associate_detections_to_tracks()
         """
-        t = float(t)
-        updated_tracks: set[int] = set()
-
-        # porządkujemy archiwum (wyrzucamy bardzo stare tracki)
-        self._prune_archive(t)
-
-        # 1. dopasowanie punktów do istniejących tracków
-        for (x, y) in detections:
-            xf = float(x)
-            yf = float(y)
-
-            track = self._find_best_match(xf, yf, t)
-            if track is not None:
-                # dopasowaliśmy do aktywnego tracka
-                self._update_track_state(track, t, xf, yf)
-                updated_tracks.add(track.id)
+        if len(tracks) == 0:
+            return [], [], list(range(len(detections)))
+        if len(detections) == 0:
+            return [], list(range(len(tracks))), []
+            
+        cost_matrix = self.compute_cost_matrix(tracks, detections)
+        
+        # Algorytm węgierski (Hungarian algorithm)
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        
+        matches = []
+        unmatched_tracks = list(range(len(tracks)))
+        unmatched_detections = list(range(len(detections)))
+        
+        for r, c in zip(row_ind, col_ind):
+            # Sprawdź próg odległości
+            if cost_matrix[r, c] > TRACK_MAX_MATCH_DISTANCE_M:
                 continue
+                
+            matches.append((r, c))
+            
+            if r in unmatched_tracks:
+                unmatched_tracks.remove(r)
+            if c in unmatched_detections:
+                unmatched_detections.remove(c)
+                
+        return matches, unmatched_tracks, unmatched_detections
 
-            # 2. jeśli nie znaleziono aktywnego tracka, próbujemy z archiwum
-            archived = self._find_best_archived_match(xf, yf, t)
-            if archived is not None:
-                # reaktywujemy stary track (odzyskujemy ID)
-                self.archived_tracks.remove(archived)
-                archived.missed_count = 0
-                if archived not in self.tracks:
-                    self.tracks.append(archived)
-
-                self._update_track_state(archived, t, xf, yf)
-                updated_tracks.add(archived.id)
-                continue
-
-            # 3. nie pasuje do niczego -> tworzymy nowy track
-            new_track = self._create_track(t, xf, yf)
-            updated_tracks.add(new_track.id)
-
-        # 4. zwiększamy missed_count dla tracków, które nic nie dostały
-        still_active: List[HumanTrack] = []
-        for tr in self.tracks:
-            if tr.id not in updated_tracks:
-                tr.missed_count += 1
-
-            # track trafia do archiwum TYLKO jeśli jest długo niewidoczny
-            if tr.missed_count > self.max_missed_confirmed:
-                self._archive_track(tr)
+    def update_tracker(self, segments: List[Segment], dt_s: float = TRACK_DT_S):
+        """
+        Główna metoda aktualizacji trackera.
+        
+        1. Filtruje segmenty (tylko HUMAN).
+        2. Przewiduje stany istniejących tracków.
+        3. Dopasowuje detekcje do tracków.
+        4. Aktualizuje dopasowane tracki.
+        5. Tworzy nowe tracki z niedopasowanych detekcji.
+        6. Obsługuje niedopasowane tracki (starzenie, usuwanie).
+        
+        Argumenty:
+            segments (List[Segment]): Lista wszystkich segmentów z aktualnego skanu.
+            dt_s (float): Delta czasu od ostatniej aktualizacji.
+            
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> update_tracker()
+        """
+        # 1. Wybierz tylko segmenty ludzkie
+        human_candidates = [s for s in segments if s.base_category == BeamCategory.HUMAN]
+        
+        # 2. Predykcja
+        for trk in self.tracks:
+            self.predict_track_state(trk, dt_s)
+            
+        # 3. Asocjacja
+        matches, unmatched_trk_idxs, unmatched_det_idxs = self.associate_detections_to_tracks(
+            self.tracks, human_candidates
+        )
+        
+        # 4. Aktualizacja dopasowanych
+        for (trk_idx, det_idx) in matches:
+            track = self.tracks[trk_idx]
+            track.history.append((track.last_update_time, track.x, track.y)) # ensure history
+            seg = human_candidates[det_idx]
+            self.update_existing_track(track, seg, dt_s)
+            
+        # 5. Tworzenie nowych
+        for det_idx in unmatched_det_idxs:
+            seg = human_candidates[det_idx]
+            new_trk = self.initialize_new_track(seg)
+            self.tracks.append(new_trk)
+            
+        # 6. Obsługa niedopasowanych
+        active_tracks = []
+        for trk_idx in unmatched_trk_idxs:
+            track = self.tracks[trk_idx]
+            track.missed_frames += 1
+            track.matched_frames = 0
+            
+            if track.missed_frames > TRACK_DELETE_MISSED_READINGS:
+                track.state = "deleted"
+                # Usunięty z listy
             else:
-                still_active.append(tr)
-
-        self.tracks = still_active
-
-
-        self.tracks = still_active
-
-        return self.tracks
-
-    def get_future_predictions(
-        self,
-        t_now: float,
-        horizon_s: float = TRACK_PREDICTION_HORIZON_S,
-        step_s: float = TRACK_PREDICTION_STEP_S,
-    ) -> Dict[int, List[Tuple[float, float, float]]]:
-        """
-        Zwraca przewidywane trajektorie dla wszystkich aktywnych tracków.
+                active_tracks.append(track)
         
-        Dla każdego aktywnego tracka generuje listę punktów w przyszłości (czas, x, y).
+        # Dodaj dopasowane tracki z powrotem do listy
+        for (trk_idx, _) in matches:
+            active_tracks.append(self.tracks[trk_idx])
+            
+        # Dodaj nowe tracki
+        # (Zostały już dodane do self.tracks w kroku 5, więc musimy odbudować listę poprawnie)
+        # Najczystsze podejście: odbuduj self.tracks usuwając "deleted"
         
-        Argumenty:
-            t_now (float): Aktualny czas.
-            horizon_s (float): Horyzont czasowy predykcji.
-            step_s (float): Krok czasowy predykcji.
-            
-        Zwraca:
-            Dict[int, List[Tuple]]: Słownik {id_tracka: lista_punktów_trajektorii}.
-            
-        Hierarchia wywołań:
-            run_vis.py -> main() -> AiwataLidarSystem.get_prediction_data() -> HumanTracker.get_future_predictions()
-        """
-        # zwraca przewidywane trajektorie (t,x,y) dla aktywnych tracków
-        t_now = float(t_now)
-        preds: Dict[int, List[Tuple[float, float, float]]] = {}
-        for tr in self.tracks:
-            if not tr.is_active:
+        final_tracks = []
+        for trk in self.tracks:
+            if trk.state == "deleted":
                 continue
-            traj = tr.predict_future_points(
-                t_start=t_now,
-                horizon_s=horizon_s,
-                step_s=step_s,
-            )
-            preds[tr.id] = traj
-        return preds
+            final_tracks.append(trk)
+            
+        self.tracks = final_tracks
+
+    def get_confirmed_tracks(self) -> List[HumanTrack]:
+        """
+        Zwraca listę potwierdzonych tracków.
+        
+        Hierarchia wywołań:
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> get_confirmed_tracks()
+        """
+        return [t for t in self.tracks if t.state == "confirmed"]
+
+    def get_all_tracks(self) -> List[HumanTrack]:
+        """
+        Zwraca wszystkie tracki (cele debugowe).
+        """
+        return self.tracks

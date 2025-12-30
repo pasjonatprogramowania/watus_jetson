@@ -1,5 +1,5 @@
 """
-EMMA Memory Module - Using mem0 library for conversational memory.
+Moduł Pamięci EMMA - Używa biblioteki mem0 do pamięci konwersacyjnej.
 """
 import os
 import logging
@@ -7,29 +7,29 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Set up environment variables for mem0
-# GOOGLE_API_KEY is required for Gemini LLM and embedder
+# Ustaw zmienne środowiskowe dla mem0
+# GOOGLE_API_KEY jest wymagany dla Gemini LLM i embeddera
 GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY", ""))
 if GOOGLE_API_KEY:
     os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
-# Initialize mem0 Memory with Gemini configuration
+# Zainicjalizuj pamięć mem0 z konfiguracją Gemini
 _memory_instance = None
 
 def _get_memory():
     """
-    Lazy initialization of mem0 Memory instance.
+    Leniwa inicjalizacja instancji pamięci mem0.
     
-    Ensures that the Memory object is created only once and reused.
-    Configures Gemini as the LLM and Embedder, and Qdrant as the vector store.
+    Zapewnia, że obiekt Memory jest tworzony tylko raz i ponownie używany.
+    Konfiguruje Gemini jako LLM i Embedder oraz Qdrant jako magazyn wektorów.
     
-    Returns:
-        Memory: The initialized mem0 Memory instance.
+    Zwraca:
+        Memory: Zainicjalizowana instancja pamięci mem0.
         
-    Raises:
-        Exception: If initialization fails.
+    Rzuca:
+        Exception: Jeśli inicjalizacja się nie powiedzie.
         
-    Call Hierarchy:
+    Hierarchia wywołań:
         emma.py -> retrieve_relevant_memories() -> _get_memory()
         emma.py -> consolidate_memory() -> _get_memory()
     """
@@ -50,15 +50,15 @@ def _get_memory():
                 "provider": "gemini",
                 "config": {
                     "model": "models/text-embedding-004",
-                    "embedding_dims": 768,  # Gemini text-embedding-004 uses 768 dimensions
+                    "embedding_dims": 768,  # Model Gemini text-embedding-004 używa 768 wymiarów
                 }
             },
             "vector_store": {
                 "provider": "qdrant",
                 "config": {
                     "collection_name": "watus_memory",
-                    "path": "./qdrant_mem0_data",  # Local storage
-                    "embedding_model_dims": 768,  # Must match embedder dims
+                    "path": "./qdrant_mem0_data",  # Pamięć lokalna
+                    "embedding_model_dims": 768,  # Musi pasować do wymiarów embeddera
                 }
             }
         }
@@ -77,17 +77,17 @@ def _get_memory():
 
 def retrieve_relevant_memories(user_id: str, query: str, n_results: int = 3) -> str:
     """
-    Retrieves memories relevant to the query using mem0.
+    Pobiera wspomnienia istotne dla zapytania używając mem0.
     
-    Args:
-        user_id (str): The user identifier (e.g., session ID).
-        query (str): The search query (usually the user's latest message).
-        n_results (int): Maximum number of results to return. Defaults to 3.
+    Argumenty:
+        user_id (str): Identyfikator użytkownika (np. ID sesji).
+        query (str): Zapytanie wyszukiwania (zazwyczaj ostatnia wiadomość użytkownika).
+        n_results (int): Maksymalna liczba wyników do zwrócenia. Domyślnie 3.
     
-    Returns:
-        str: A formatted string with memory context, or empty string if no memories found.
+    Zwraca:
+        str: Sformatowany ciąg znaków z kontekstem pamięci lub pusty ciąg, jeśli brak wspomnień.
     
-    Call Hierarchy:
+    Hierarchia wywołań:
         warstwa_llm/src/main.py -> process_question() -> retrieve_relevant_memories()
     """
     print(f"DEBUG: mem0: Retrieving memories for user {user_id} with query: {query}")
@@ -116,7 +116,7 @@ def retrieve_relevant_memories(user_id: str, query: str, n_results: int = 3) -> 
         if not context_parts:
             return ""
         
-        memory_context = "MEMORY CONTEXT (from previous conversations with this user):\n" + "\n".join(context_parts) + "\n"
+        memory_context = "KONTEKST PAMIĘCI (z poprzednich rozmów z tym użytkownikiem):\n" + "\n".join(context_parts) + "\n"
         print(f"DEBUG: mem0: Returning memory context: {memory_context}")
         logger.info(f"mem0: Returning memory context: {memory_context}")
         return memory_context
@@ -129,20 +129,20 @@ def retrieve_relevant_memories(user_id: str, query: str, n_results: int = 3) -> 
 
 def consolidate_memory(user_id: str, user_input: str, ai_response: str):
     """
-    Consolidates the conversation turn into memory using mem0.
+    Konsoliduje turę rozmowy w pamięci używając mem0.
     
-    Adds the user input and AI response to the memory system. 
-    mem0 automatically handles extraction and storage of relevant facts.
+    Dodaje wiadomość użytkownika i odpowiedź AI do systemu pamięci.
+    mem0 automatycznie obsługuje ekstrakcję i przechowywanie istotnych faktów.
     
-    Args:
-        user_id (str): The user identifier.
-        user_input (str): The user's message.
-        ai_response (str): The AI's response.
+    Argumenty:
+        user_id (str): Identyfikator użytkownika.
+        user_input (str): Wiadomość użytkownika.
+        ai_response (str): Odpowiedź AI.
         
-    Returns:
+    Zwraca:
         None
         
-    Call Hierarchy:
+    Hierarchia wywołań:
         warstwa_llm/src/main.py -> process_question() -> consolidate_memory()
     """
     print(f"DEBUG: mem0: Consolidating memory for user {user_id}")
@@ -151,13 +151,13 @@ def consolidate_memory(user_id: str, user_input: str, ai_response: str):
     try:
         memory = _get_memory()
         
-        # Create messages in the format expected by mem0
+        # Utwórz wiadomości w formacie oczekiwanym przez mem0
         messages = [
             {"role": "user", "content": user_input},
             {"role": "assistant", "content": ai_response}
         ]
         
-        # Add to memory - mem0 will automatically extract and store relevant facts
+        # Dodaj do pamięci - mem0 automatycznie wyodrębni i zapisze istotne fakty
         result = memory.add(messages, user_id=user_id)
         
         print(f"DEBUG: mem0: Memory consolidation result: {result}")

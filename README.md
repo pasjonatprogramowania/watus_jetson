@@ -424,10 +424,26 @@ watus_jetson/
 │   ├── consolidator.py     # Główny skrypt consolidatora
 │   └── consolidator.json   # Plik konfiguracyjny
 ├── lidar/                  # Moduł przetwarzania danych LiDAR
-│   ├── run.py              # Skrypt uruchomieniowy modułu LiDAR
-│   ├── run_vis.py          # Skrypt wizualizacji danych LiDAR
+│   ├── src/                # Kod źródłowy
+│   │   ├── config.py       # Konfiguracja systemu
+│   │   ├── check_lidar.py  # Skrypt diagnostyczny
+│   │   ├── Grid_vis.py     # Wizualizacja siatki zajętości
+│   │   ├── Live_Vis_v3.py  # Wizualizacja na żywo (offline recording)
+│   │   ├── run_live.py     # Główna pętla przetwarzania
+│   │   ├── hardware/       # Sterowniki sprzętowe
+│   │   │   └── lidar_driver.py
+│   │   └── lidar/          # Logika biznesowa
+│   │       ├── io.py             # Operacje wejścia/wyjścia (JSON)
+│   │       ├── occupancy_grid.py # Mapa zajętości
+│   │       ├── preprocess.py     # Przetwarzanie wstępne
+│   │       ├── segmentation.py   # Segmentacja obiektów
+│   │       ├── system.py         # Główna klasa systemu
+│   │       ├── tracking.py       # Śledzenie (Human Tracking)
+│   │       └── types.py          # Typy danych i definicje
+│   ├── run.py              # Skrypt uruchomieniowy modułu LiDAR (legacy)
+│   ├── run_vis.py          # Skrypt wizualizacji danych LiDAR (legacy)
 │   └── requirements.txt    # Zależności modułu LiDAR
-├── warstwa_audio/          # Moduł przetwarzania audio
+├── warstwa_audio/          # Moduł przetwarzania dźwięku
 │   ├── run_watus.py        # Główny frontend audio (orchestrator)
 │   ├── camera_runner.py    # Przetwarzanie obrazu dla kontekstu
 │   ├── run_reporter.py     # Reporter ZMQ i interfejs LLM
@@ -437,9 +453,15 @@ watus_jetson/
 │   └── README.md           # Dokumentacja modułu audio
 ├── warstwa_llm/            # Moduł warstwy językowej (LLM)
 │   ├── src/                # Kod źródłowy
-│   │   ├── __init__.py     # Konfiguracja i prompty systemowe
-│   │   ├── main.py         # Serwer FastAPI i logika główna
-│   │   └── vectordb.py     # Obsługa ChromaDB i RAG
+│   │   ├── logic/          # Logika biznesowa
+│   │   │   ├── llm.py      # Obsługa modeli językowych
+│   │   │   └── vectordb.py # Obsługa bazy wektorowej
+│   │   ├── __init__.py     # Inicjalizacja pakietu
+│   │   ├── api.py          # Definicje endpointów API
+│   │   ├── config.py       # Konfiguracja modułu
+│   │   ├── main.py         # Punkt wejścia (serwer)
+│   │   ├── types.py        # Modele danych
+│   │   └── vectordb.py     # Wrapper (legacy)
 │   ├── requirements.txt    # Zależności modułu LLM
 │   ├── .env.example        # Przykładowa konfiguracja środowiskowa
 │   └── README.md           # Dokumentacja modułu LLM
@@ -1416,14 +1438,14 @@ echo "Warstwa wizji uruchomiona (PID: $VISION_PID)"
 echo "[4/5] Uruchamianie warstwy LiDAR..."
 cd ../lidar
 source ../watus_env/bin/activate
-python lidar.py > logs/lidar.log 2>&1 &
+python run.py > logs/lidar.log 2>&1 &
 LIDAR_PID=$!
 echo "Warstwa LiDAR uruchomiona (PID: $LIDAR_PID)"
 
 echo "[5/5] Uruchamianie warstwy audio..."
 cd ../warstwa_audio
 source ../watus_env/bin/activate
-python watus.py > logs/audio.log 2>&1 &
+python run_watus.py > logs/audio.log 2>&1 &
 AUDIO_PID=$!
 echo "Warstwa audio uruchomiona (PID: $AUDIO_PID)"
 

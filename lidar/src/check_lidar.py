@@ -1,44 +1,30 @@
-from src.hardware.lidar_driver import init_lidar, get_next_scan
-from src.config import LIDAR_PORT
+from .config import LIDAR_PORT
+from .hardware.lidar_driver import initialize_lidar, acquire_complete_scan
 
-
-def main():
+# Prosty skrypt testowy
+def main() -> None:
     """
-    Testuje połączenie z LiDAR i odczytuje jeden skan.
+    Prosty test połączenia z LiDARem.
     
-    Funkcja diagnostyczna sprawdzająca:
-      1. Czy port szeregowy można otworzyć
-      2. Czy LiDAR przesyła poprawne dane
-    Wyświetla odczytane wartości r (odległość) i theta (kąt).
-    
-    Argumenty:
-        Brak
-    
-    Zwraca:
-        None
+    Próbuje zainicjować połączenie i pobrać jeden pełny skan (20 pakietów).
+    Wypisuje statystyki pobranych danych.
     
     Hierarchia wywołań:
-        __main__ -> main() -> init_lidar(), get_next_scan()
+        lidar/src/check_lidar.py -> __main__ -> main()
     """
-    print(f"Próbuję otworzyć port: {LIDAR_PORT}")
+    print(f"Sprawdzam lidar na porcie: {LIDAR_PORT}")
     try:
-        init_lidar(port=LIDAR_PORT)
-        print("Port otwarty poprawnie.")
+        initialize_lidar(LIDAR_PORT)
+        print("Połączono.")
+        
+        # Pobierz próbkę
+        r, theta = acquire_complete_scan(num_packets=20)
+        print(f"Pobrano skan. Liczba punktów: {len(r)}")
+        if len(r) > 0:
+            print(f"Przykładowe (r, theta): {r[0]:.2f} m, {theta[0]:.2f} rad")
+            
     except Exception as e:
-        print("Błąd przy otwieraniu portu:")
-        print(repr(e))
-        return
-
-    print("Próbuję odczytać jeden mini-skan (12 punktów)...")
-    try:
-        r, theta = get_next_scan()
-        print("Odczyt danych zakończony powodzeniem.")
-        print("r (m):      ", r)
-        print("theta (rad):", theta)
-    except Exception as e:
-        print("Port otwarty, ale wystąpił błąd przy czytaniu danych:")
-        print(repr(e))
-
+        print(f"Błąd: {e}")
 
 if __name__ == "__main__":
     main()

@@ -1,13 +1,13 @@
 """
-Simple Memory System Test Script
-Run with: python test_memory_simple.py
+Prosty Skrypt Testowy Systemu Pamięci
+Uruchom za pomocą: python test_memory_simple.py
 """
 import sys
 import os
 import time
 import requests
 
-# Add project root to path
+# Dodaj korzeń projektu do ścieżki
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 API_BASE_URL = "http://localhost:8000/api1"
@@ -24,8 +24,8 @@ def print_test(name, passed, details=""):
         print(f"         {details}")
 
 def test_imports():
-    """Test that all modules can be imported."""
-    print_header("TEST 1: Module Imports")
+    """Sprawdź czy wszystkie moduły mogą zostać zaimportowane."""
+    print_header("TEST 1: Importy Modułów")
     
     try:
         from mem0 import Memory
@@ -52,21 +52,21 @@ def test_imports():
     return True
 
 def test_memory_init():
-    """Test mem0 memory initialization."""
-    print_header("TEST 2: Memory Initialization")
+    """Przetestuj inicjalizację pamięci mem0."""
+    print_header("TEST 2: Inicjalizacja Pamięci")
     
     try:
         from src.emma import _get_memory
         memory = _get_memory()
-        print_test("mem0 Memory instance created", memory is not None)
+        print_test("instancja pamięci mem0 utworzona", memory is not None)
         return True
     except Exception as e:
-        print_test("mem0 Memory initialization", False, str(e))
+        print_test("Inicjalizacja pamięci mem0", False, str(e))
         return False
 
 def test_memory_consolidation():
-    """Test storing memories."""
-    print_header("TEST 3: Memory Consolidation")
+    """Przetestuj zapisywanie wspomnień."""
+    print_header("TEST 3: Konsolidacja Pamięci")
     
     try:
         from src.emma import consolidate_memory
@@ -76,39 +76,39 @@ def test_memory_consolidation():
         ai_response = "Hello TestUser! I'll remember that you're running tests."
         
         consolidate_memory(user_id, user_input, ai_response)
-        print_test("Memory consolidation", True, f"user_id={user_id}")
+        print_test("Konsolidacja pamięci", True, f"user_id={user_id}")
         return True, user_id
     except Exception as e:
-        print_test("Memory consolidation", False, str(e))
+        print_test("Konsolidacja pamięci", False, str(e))
         return False, None
 
 def test_memory_retrieval(user_id):
-    """Test retrieving memories."""
-    print_header("TEST 4: Memory Retrieval")
+    """Przetestuj pobieranie wspomnień."""
+    print_header("TEST 4: Pobieranie Pamięci")
     
     try:
         from src.emma import retrieve_relevant_memories
         
-        # Wait for consolidation
-        print("  Waiting 2s for memory consolidation...")
+        # Poczekaj na konsolidację
+        print("  Czekam 2s na konsolidację pamięci...")
         time.sleep(2)
         
         result = retrieve_relevant_memories(user_id, "What is my name?")
         
         has_content = len(result) > 0
-        print_test("Memory retrieval", True, f"Got {len(result)} chars")
+        print_test("Pobieranie pamięci", True, f"Pobrano {len(result)} znaków")
         
         if has_content:
-            print(f"  Memory context preview: {result[:100]}...")
+            print(f"  Podgląd kontekstu pamięci: {result[:100]}...")
         
         return True
     except Exception as e:
-        print_test("Memory retrieval", False, str(e))
+        print_test("Pobieranie pamięci", False, str(e))
         return False
 
 def test_vector_search():
-    """Test ChromaDB vector search for WAT knowledge."""
-    print_header("TEST 5: Vector Database (WAT Knowledge)")
+    """Przetestuj wyszukiwanie wektorowe ChromaDB dla wiedzy WAT."""
+    print_header("TEST 5: Baza Wektorowa (Wiedza WAT)")
     
     try:
         from src.main import vector_search
@@ -116,33 +116,33 @@ def test_vector_search():
         result = vector_search("Ile wydziałów ma WAT?")
         
         has_docs = result is not None and hasattr(result, 'documents') and len(result.documents) > 0
-        print_test("WAT knowledge retrieval", has_docs)
+        print_test("Pobieranie wiedzy WAT", has_docs)
         
         if has_docs:
             first_doc = result.documents[0] if isinstance(result.documents[0], str) else result.documents[0]
-            print(f"  First result preview: {str(first_doc)[:80]}...")
+            print(f"  Podgląd pierwszego wyniku: {str(first_doc)[:80]}...")
         
         return True
     except Exception as e:
-        print_test("Vector search", False, str(e))
+        print_test("Wyszukiwanie wektorowe", False, str(e))
         return False
 
 def test_api_integration():
-    """Test full API integration."""
-    print_header("TEST 6: API Integration")
+    """Przetestuj pełną integrację API."""
+    print_header("TEST 6: Integracja API")
     
     try:
-        # Check if API is running
+        # Sprawdź czy API działa
         response = requests.get("http://localhost:8000/docs", timeout=3)
         if response.status_code != 200:
-            print_test("API health check", False, "API not responding")
+            print_test("Sprawdzenie stanu API", False, "API nie odpowiada")
             return False
-        print_test("API health check", True)
+        print_test("Sprawdzenie stanu API", True)
     except requests.ConnectionError:
-        print_test("API connection", False, "API not running. Start with: python -m src.main")
+        print_test("Połączenie API", False, "API nie działa. Uruchom za pomocą: python -m src.main")
         return False
     
-    # Test question processing
+    # Przetestuj przetwarzanie pytań
     try:
         response = requests.post(
             f"{API_BASE_URL}/process_question",
@@ -153,21 +153,21 @@ def test_api_integration():
         if response.status_code == 200:
             data = response.json()
             has_answer = "answer" in data and len(data["answer"]) > 0
-            print_test("API question processing", has_answer)
+            print_test("Przetwarzanie pytania przez API", has_answer)
             if has_answer:
-                print(f"  Response preview: {data['answer'][:80]}...")
+                print(f"  Podgląd odpowiedzi: {data['answer'][:80]}...")
         else:
-            print_test("API question processing", False, f"Status: {response.status_code}")
+            print_test("Przetwarzanie pytania przez API", False, f"Status: {response.status_code}")
             return False
     except Exception as e:
-        print_test("API request", False, str(e))
+        print_test("Żądanie API", False, str(e))
         return False
     
-    # Wait for memory consolidation
-    print("  Waiting 3s for memory consolidation...")
+    # Poczekaj na konsolidację pamięci
+    print("  Czekam 3s na konsolidację pamięci...")
     time.sleep(3)
     
-    # Test memory recall
+    # Przetestuj przypominanie pamięci
     try:
         response = requests.post(
             f"{API_BASE_URL}/process_question",
@@ -179,66 +179,66 @@ def test_api_integration():
             data = response.json()
             answer = data.get("answer", "").lower()
             has_name = "apitestuser" in answer or "api" in answer
-            print_test("Memory recall in response", has_name, 
-                      "Name found in response" if has_name else "Name NOT found")
-            print(f"  Response: {data['answer'][:100]}...")
+            print_test("Przypomnienie pamięci w odpowiedzi", has_name, 
+                      "Imię znalezione w odpowiedzi" if has_name else "Imię NIE znalezione")
+            print(f"  Odpowiedź: {data['answer'][:100]}...")
             return True
         else:
-            print_test("Memory recall", False, f"Status: {response.status_code}")
+            print_test("Przypomnienie pamięci", False, f"Status: {response.status_code}")
             return False
     except Exception as e:
-        print_test("Memory recall", False, str(e))
+        print_test("Przypomnienie pamięci", False, str(e))
         return False
 
 def main():
     print("\n" + "=" * 60)
-    print(" EMMA MEMORY SYSTEM - COMPREHENSIVE TESTS")
+    print(" SYSTEM PAMIĘCI EMMA - KOMPLEKSOWE TESTY")
     print("=" * 60)
     
     results = []
     
-    # Test 1: Imports
-    results.append(("Imports", test_imports()))
+    # Test 1: Importy
+    results.append(("Importy", test_imports()))
     
-    # Test 2: Memory Init
-    results.append(("Memory Init", test_memory_init()))
+    # Test 2: Inicjalizacja Pamięci
+    results.append(("Inicjalizacja Pamięci", test_memory_init()))
     
-    # Test 3: Consolidation
+    # Test 3: Konsolidacja
     success, user_id = test_memory_consolidation()
-    results.append(("Memory Consolidation", success))
+    results.append(("Konsolidacja Pamięci", success))
     
-    # Test 4: Retrieval
+    # Test 4: Pobieranie
     if user_id:
-        results.append(("Memory Retrieval", test_memory_retrieval(user_id)))
+        results.append(("Pobieranie Pamięci", test_memory_retrieval(user_id)))
     
-    # Test 5: Vector Search
-    results.append(("Vector Search", test_vector_search()))
+    # Test 5: Wyszukiwanie Wektorowe
+    results.append(("Wyszukiwanie Wektorowe", test_vector_search()))
     
-    # Test 6: API Integration
-    results.append(("API Integration", test_api_integration()))
+    # Test 6: Integracja API
+    results.append(("Integracja API", test_api_integration()))
     
-    # Summary
-    print_header("TEST SUMMARY")
+    # Podsumowanie
+    print_header("PODSUMOWANIE TESTÓW")
     passed = sum(1 for _, r in results if r)
     total = len(results)
     
     for name, result in results:
         print_test(name, result)
     
-    print(f"\n  Total: {passed}/{total} tests passed")
+    print(f"\n  Łącznie: {passed}/{total} testów zaliczonych")
     
     if passed == total:
-        print("\n  🎉 ALL TESTS PASSED!")
+        print("\n  🎉 WSZYSTKIE TESTY ZALICZONE!")
         return 0
     else:
-        print(f"\n  ⚠ {total - passed} tests failed")
+        print(f"\n  ⚠ {total - passed} testów niezaliczonych")
         return 1
 
 if __name__ == "__main__":
     try:
         exit_code = main()
     except KeyboardInterrupt:
-        print("\n\nTests interrupted.")
+        print("\n\nTesty przerwane.")
         exit_code = 1
     
-    input("\nPress Enter to exit...")
+    input("\nNaciśnij Enter, aby zakończyć...")

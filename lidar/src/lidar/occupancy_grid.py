@@ -14,9 +14,9 @@ from src.config import (
     HIT_DECAY_FREE,
     GRID_DANGER_RADIUS_CELLS,
     GRID_MAX_OBSTACLE_HITS,
-    SAFETY_STOP_RADIUS_M,       # NEW
-    SAFETY_WARN_RADIUS_M,       # NEW
-    SAFETY_CENTER_ANGLE_DEG,    # NEW
+    SAFETY_STOP_RADIUS_M,       
+    SAFETY_WARN_RADIUS_M,       
+    SAFETY_CENTER_ANGLE_DEG,    
 )
 from .preprocess import BeamResult, BeamCategory
 
@@ -139,13 +139,13 @@ class OccupancyGrid:
     # KONWERSJE (świat <-> siatka)
     # =========================
 
-    def world_to_cell(self, x: float, y: float) -> Optional[Tuple[int, int]]:
+    def convert_world_to_grid_coords(self, x: float, y: float) -> Optional[Tuple[int, int]]:
         """
         Świat (m) -> indeksy komórki (ix, iy). Zwraca None gdy poza mapą.
         
         Hierarchia wywołań:
-            occupancy_grid.py -> _mark_ray_free() -> world_to_cell()
-            occupancy_grid.py -> update_from_scan() -> world_to_cell()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.perform_ray_tracing_clearing() -> convert_world_to_grid_coords()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> convert_world_to_grid_coords()
         """
         ix = int((x - self.x_min) / self.cell_size)
         iy = int((y - self.y_min) / self.cell_size)
@@ -154,12 +154,12 @@ class OccupancyGrid:
             return ix, iy
         return None
 
-    def cell_to_world(self, ix: int, iy: int) -> Tuple[float, float]:
+    def convert_grid_to_world_coords(self, ix: int, iy: int) -> Tuple[float, float]:
         """
         Środek komórki (ix,iy) -> (x,y) w metrach.
         
         Hierarchia wywołań:
-            occupancy_grid.py -> compute_safety_output() -> cell_to_world()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.calculate_safety_status() -> convert_grid_to_world_coords()
         """
         x = self.x_min + (ix + 0.5) * self.cell_size
         y = self.y_min + (iy + 0.5) * self.cell_size
@@ -169,7 +169,7 @@ class OccupancyGrid:
     # WEWNĘTRZNE POMOCNICZE
     # =========================
 
-    def _set_cell_type(self, ix: int, iy: int, new_type: CellType):
+    def set_cell_type_with_priority(self, ix: int, iy: int, new_type: CellType):
         """
         Ustawia typ komórki z uwzględnieniem priorytetów.
         
@@ -182,8 +182,8 @@ class OccupancyGrid:
             new_type (CellType): Nowy typ komórki.
             
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _set_cell_type()
-            occupancy_grid.py -> _bump_obstacle_hits() -> _set_cell_type()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> set_cell_type_with_priority()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.increment_obstacle_hits() -> set_cell_type_with_priority()
         """
         """Ustawia typ komórki z prostą logiką priorytetów."""
         current = CellType(int(self.cell_type[iy, ix]))
@@ -195,7 +195,7 @@ class OccupancyGrid:
         # w pozostałych przypadkach nadpisujemy
         self.cell_type[iy, ix] = int(new_type)
 
-    def _bump_obstacle_hits(self, ix: int, iy: int):
+    def increment_obstacle_hits(self, ix: int, iy: int):
         """
         Inkrementuje licznik trafień przeszkody w danej komórce.
         
@@ -207,7 +207,7 @@ class OccupancyGrid:
             iy (int): Indeks Y komórki.
             
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _bump_obstacle_hits()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> increment_obstacle_hits()
         """
         """Zwiększa licznik obstacle_hits z saturacją."""
         hits = int(self.obstacle_hits[iy, ix])
@@ -216,9 +216,9 @@ class OccupancyGrid:
         self.obstacle_hits[iy, ix] = hits
 
         if hits >= MIN_HITS_FOR_STATIC:
-            self._set_cell_type(ix, iy, CellType.STATIC_OBSTACLE)
+            self.set_cell_type_with_priority(ix, iy, CellType.STATIC_OBSTACLE)
 
-    def _decay_obstacle_hit(self, ix: int, iy: int):
+    def decay_obstacle_hits(self, ix: int, iy: int):
         """
         Zmniejsza licznik trafień przeszkody, gdy promień przechodzi przez komórkę (jest wolna).
         
@@ -229,7 +229,7 @@ class OccupancyGrid:
             iy (int): Indeks Y komórki.
             
         Hierarchia wywołań:
-            occupancy_grid.py -> _mark_ray_free() -> _decay_obstacle_hit()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.perform_ray_tracing_clearing() -> decay_obstacle_hits()
         """
         """Opcjonalny zanik obstacle_hits gdy promień przechodzi jako FREE."""
         if HIT_DECAY_FREE <= 0:
@@ -242,25 +242,25 @@ class OccupancyGrid:
             if hits == 0 and self.cell_type[iy, ix] != CellType.HUMAN:
                 self.cell_type[iy, ix] = int(CellType.FREE)
 
-    def _beam_to_local_xy(self, beam: BeamResult) -> Tuple[float, float]:
+    def convert_beam_to_robot_local(self, beam: BeamResult) -> Tuple[float, float]:
         """
-        Konwersja wiązki lidarowej (r,theta) -> lokalne XY robota.
+        Konwersja wiązki lidarowej (r,theta) -> robota lokalne XY.
         
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _beam_to_local_xy()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> convert_beam_to_robot_local()
         """
         x = beam.r * np.cos(beam.theta)
         y = beam.r * np.sin(beam.theta)
         return x, y
 
-    def _local_to_world(self, pose: Pose2D, x_local: float, y_local: float) -> Tuple[float, float]:
+    def transform_local_to_world(self, pose: Pose2D, x_local: float, y_local: float) -> Tuple[float, float]:
         """
-        Lokalne (x,y) robota -> globalne (x,y).
+        Robot lokalne (x,y) -> globalne (x,y).
         
         Używa pozycji i orientacji robota (Pose2D).
         
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _local_to_world()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> transform_local_to_world()
         """
         cos_yaw = np.cos(pose.yaw)
         sin_yaw = np.sin(pose.yaw)
@@ -270,7 +270,7 @@ class OccupancyGrid:
 
         return x_world, y_world
 
-    def _mark_ray_free(self, pose: Pose2D, x_hit: float, y_hit: float):
+    def perform_ray_tracing_clearing(self, pose: Pose2D, x_hit: float, y_hit: float):
         """
         Wykonuje Ray Tracing od robota do punktu trafienia, czyszcząc komórki po drodze.
         
@@ -285,7 +285,7 @@ class OccupancyGrid:
             y_hit (float): Współrzędna Y końca promienia.
             
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _mark_ray_free()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> perform_ray_tracing_clearing()
         """
         # start (pozycja robota)
         x0, y0 = pose.x, pose.y
@@ -306,7 +306,7 @@ class OccupancyGrid:
             x = x0 + t * dx
             y = y0 + t * dy
 
-            idx = self.world_to_cell(x, y)
+            idx = self.convert_world_to_grid_coords(x, y)
             if idx is None:
                 continue
             ix, iy = idx
@@ -318,11 +318,11 @@ class OccupancyGrid:
             if self.obstacle_hits[iy, ix] == 0:
                 self.cell_type[iy, ix] = int(CellType.FREE)
             else:
-                self._decay_obstacle_hit(ix, iy)
+                self.decay_obstacle_hits(ix, iy)
 
-    def _mark_danger_around(self, ix_hit: int, iy_hit: int):
+    def mark_danger_zone_around_cell(self, ix_hit: int, iy_hit: int):
         """
-        Oznacza komórki w säsiedztwie wykrytego człowieka jako DANGER.
+        Oznacza komórki w sąsiedztwie wykrytego człowieka jako DANGER.
         
         Tworzy strefę buforową wokół człowieka o promieniu GRID_DANGER_RADIUS_CELLS.
         
@@ -331,7 +331,7 @@ class OccupancyGrid:
             iy_hit (int): Indeks Y komórki z człowiekiem.
             
         Hierarchia wywołań:
-            occupancy_grid.py -> update_from_scan() -> _mark_danger_around()
+            lidar/src/lidar/occupancy_grid.py -> OccupancyGrid.update_grid_from_scan_result() -> mark_danger_zone_around_cell()
         """
         """Oznacza komórki w promieniu GRID_DANGER_RADIUS_CELLS jako DANGER."""
         r = GRID_DANGER_RADIUS_CELLS
@@ -346,7 +346,7 @@ class OccupancyGrid:
     # GŁÓWNA AKTUALIZACJA MAPY
     # =========================
 
-    def update_from_scan(self, pose: Pose2D, beams: List[BeamResult]):
+    def update_grid_from_scan_result(self, pose: Pose2D, beams: List[BeamResult]):
         """
         Aktualizuje siatkę na podstawie pojedynczego skanu.
         - ray tracing czyści FREE wzdłuż wiązki
@@ -360,7 +360,7 @@ class OccupancyGrid:
             beams (List[BeamResult]): Lista wiązek z Lidaru.
             
         Hierarchia wywołań:
-            lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> update_from_scan()
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> update_grid_from_scan_result()
         """
         # 1) warstwa DANGER jest chwilowa -> czyścimy na start
         self.cell_danger[:, :] = int(CellDanger.NO_DANGER)
@@ -370,27 +370,27 @@ class OccupancyGrid:
                 continue
 
             # przelicz wiązkę na punkt w świecie
-            x_local, y_local = self._beam_to_local_xy(beam)
-            x_world, y_world = self._local_to_world(pose, x_local, y_local)
+            x_local, y_local = self.convert_beam_to_robot_local(beam)
+            x_world, y_world = self.transform_local_to_world(pose, x_local, y_local)
 
             # ray tracing FREE po drodze
-            self._mark_ray_free(pose, x_world, y_world)
+            self.perform_ray_tracing_clearing(pose, x_world, y_world)
 
             # końcówka wiązki -> aktualizacja komórki docelowej
-            hit_idx = self.world_to_cell(x_world, y_world)
+            hit_idx = self.convert_world_to_grid_coords(x_world, y_world)
             if hit_idx is None:
                 continue
             ix_hit, iy_hit = hit_idx
 
             if beam.category == BeamCategory.OBSTACLE:
                 # tylko statyczna przeszkoda, bez DANGER
-                self._bump_obstacle_hits(ix_hit, iy_hit)
+                self.increment_obstacle_hits(ix_hit, iy_hit)
 
             elif beam.category == BeamCategory.HUMAN:
                 # człowiek:
-                self._set_cell_type(ix_hit, iy_hit, CellType.HUMAN)
+                self.set_cell_type_with_priority(ix_hit, iy_hit, CellType.HUMAN)
                 # i lokalne rozszerzenie zagrożenia
-                self._mark_danger_around(ix_hit, iy_hit)
+                self.mark_danger_zone_around_cell(ix_hit, iy_hit)
 
             # inne kategorie można ewentualnie obsłużyć tutaj
 
@@ -398,7 +398,7 @@ class OccupancyGrid:
     # STATYSTYKI / SERIALIZACJA
     # =========================
 
-    def count_cells_by_type(self) -> Dict[CellType, int]:
+    def get_cell_type_counts(self) -> Dict[CellType, int]:
         """
         Zlicza liczbę komórek każdego typu (FREE, OCCUPIED, HUMAN, UNKNOWN).
         
@@ -406,7 +406,7 @@ class OccupancyGrid:
             Dict[CellType, int]: Słownik {typ_komórki: liczebność}.
             
         Hierarchia wywołań:
-             lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> logging/debug
+             lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> get_cell_type_counts()
         """
         """Zwraca słownik: typ komórki -> liczba."""
         result: Dict[CellType, int] = {}
@@ -414,7 +414,7 @@ class OccupancyGrid:
             result[t] = int(np.sum(self.cell_type == int(t)))
         return result
 
-    def count_danger_cells(self) -> int:
+    def get_danger_cell_count(self) -> int:
         """
         Zlicza komórki oznaczone jako DANGER (strefa niebezpieczna).
         
@@ -422,12 +422,12 @@ class OccupancyGrid:
             int: Liczba niebezpiecznych komórek.
             
         Hierarchia wywołań:
-             lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> logging/debug
+             lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> get_danger_cell_count()
         """
         """Liczba komórek z flagą DANGER."""
         return int(np.sum(self.cell_danger == int(CellDanger.DANGER)))
 
-    def to_json_dict(self) -> Dict[str, Any]:
+    def serialize_to_json(self) -> Dict[str, Any]:
         """
         Serializuje stan mapy do słownika JSON.
         
@@ -437,7 +437,7 @@ class OccupancyGrid:
             Dict[str, Any]: Słownik reprezentujący stan mapy (wymiary, dane komórek).
             
         Hierarchia wywołań:
-            lidar/src/lidar/system.py -> AiwataLidarSystem.get_scan_data() -> to_json_dict()
+            lidar/src/lidar/system.py -> AiwataLidarSystem.get_scan_data() -> serialize_to_json()
         """
         """
         Struktura gotowa do zapisania w JSON (mapa + warstwa DANGER).
@@ -454,10 +454,10 @@ class OccupancyGrid:
         }
 
     # =========================
-    # === LICZENIE SAFETY OUTPUT ===
+    # === SAFETY OUTPUT CALCULATION ===
     # =========================
 
-    def compute_safety_output(self) -> SafetyOutput:
+    def calculate_safety_status(self) -> SafetyOutput:
         """
         Analizuje bieżącą mapę cell_danger i liczy:
         - bity stop / warning,
@@ -473,7 +473,7 @@ class OccupancyGrid:
             SafetyOutput: Obiekt z flagami bezpieczeństwa.
             
         Hierarchia wywołań:
-            lidar/src/lidar/system.py -> AiwataLidarSystem.process_scan() -> compute_safety_output()
+            lidar/src/lidar/system.py -> AiwataLidarSystem.process_complete_lidar_scan() -> calculate_safety_status()
         """
         # znajdź wszystkie komórki zagrożenia
         ys, xs = np.where(self.cell_danger == int(CellDanger.DANGER))
@@ -505,7 +505,7 @@ class OccupancyGrid:
         warn_left = warn_center = warn_right = False
 
         for iy, ix in zip(ys, xs):
-            x, y = self.cell_to_world(ix, iy)
+            x, y = self.convert_grid_to_world_coords(ix, iy)
             r = math.hypot(x, y)
             if r < 1e-6:
                 continue
@@ -592,8 +592,8 @@ class OccupancyGrid:
             Zewnętrzne moduły wizualizacji/debuggowania.
         """
         """BeamResult + Pose2D -> punkt (x,y) w świecie."""
-        x_local, y_local = self._beam_to_local_xy(beam)
-        x_world, y_world = self._local_to_world(pose, x_local, y_local)
+        x_local, y_local = self.convert_beam_to_robot_local(beam)
+        x_world, y_world = self.transform_local_to_world(pose, x_local, y_local)
         return x_world, y_world
 
     def local_to_world_point(self, pose: Pose2D, x_local: float, y_local: float) -> Tuple[float, float]:
@@ -612,4 +612,4 @@ class OccupancyGrid:
             Zewnętrzne moduły wizualizacji.
         """
         """Lokalne (x,y) robota -> globalne (x,y)."""
-        return self._local_to_world(pose, x_local, y_local)
+        return self.transform_local_to_world(pose, x_local, y_local)

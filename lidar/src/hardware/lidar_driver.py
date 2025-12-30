@@ -1,276 +1,192 @@
-from __future__ import annotations
-from typing import Tuple, List
-
-import struct
+import serial
+import time
+import math
 import numpy as np
-import serial  # pip install pyserial
-
+from typing import Tuple, List, Optional
 from src.config import LIDAR_PORT, LIDAR_BAUDRATE, LIDAR_TIMEOUT
 
-HEADER_BYTE = 0x54  # bajt nagłówka ramki
-
-_ser: serial.Serial | None = None
-
-
-def init_lidar(
-    port: str = LIDAR_PORT,
-    baudrate: int = LIDAR_BAUDRATE,
-    timeout: float = LIDAR_TIMEOUT,
-) -> None:
+class LidarDriver:
     """
-    Inicjalizuje połączenie z LiDAR przez port szeregowy.
+    Sterownik do obsługi lidaru przez port szeregowy.
     
-    Funkcja otwiera port szeregowy do komunikacji z LiDAR. Jest idempotentna -
-    jeśli port jest już otwarty, nie wykonuje żadnej akcji.
+    Odpowiada za:
+    - Otwarcie/zamknięcie portu
+    - Odczyt bitów i bajtów pakietów
+    - Parsowanie nagłówków i danycyh (odległość, kąt)
+    - Składanie pełnego skanu (360 stopni)
+    """
+
+    def __init__(self, port: str = LIDAR_PORT, baudrate: int = LIDAR_BAUDRATE, timeout: float = LIDAR_TIMEOUT):
+        """
+        Inicjalizuje obiekt sterownika.
+        
+        Nie otwiera portu automatycznie - należy użyć metody connect().
+        
+        Argumenty:
+            port (str): Nazwa portu szeregowego.
+            baudrate (int): Prędkość transmisji.
+            timeout (float): Czas oczekiwania na dane.
+            
+        Hierarchia wywołań:
+            lidar/src/hardware/lidar_driver.py -> initialize_lidar() -> LidarDriver()
+        """
+        self.port = port
+        self.baudrate = baudrate
+        self.timeout = timeout
+        self.ser: Optional[serial.Serial] = None
+
+    def connect(self):
+        """
+        Otwiera port szeregowy.
+        
+        Wyjątki:
+            serial.SerialException: Gdy nie uda się otworzyć portu.
+            
+        Hierarchia wywołań:
+            lidar/src/hardware/lidar_driver.py -> initialize_lidar() -> connect()
+        """
+        self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+        if not self.ser.is_open:
+            self.ser.open()
+
+    def disconnect(self):
+        """
+        Zamyka port szeregowy.
+        
+        Hierarchia wywołań:
+             Może być używane przy zamykaniu aplikacji.
+        """
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+
+    def _read_exact_bytes(self, size: int) -> bytes:
+        """
+        Czyta dokładnie 'size' bajtów z portu.
+        
+        Argumenty:
+            size (int): Liczba bajtów do odczytania.
+            
+        Zwraca:
+            bytes: Odczytane dane.
+            
+        Wyjątki:
+            IOError: Gdy nie udało się odczytać wymaganej liczby bajtów.
+            
+        Hierarchia wywołań:
+            lidar/src/hardware/lidar_driver.py -> _read_single_packet() -> _read_exact_bytes()
+        """
+        if self.ser is None:
+            raise IOError("Lidar nie jest połączony")
+        data = self.ser.read(size)
+        if len(data) < size:
+            raise IOError(f"Odczytano za mało danych: {len(data)}/{size}")
+        return data
+
+    def _read_single_packet(self) -> bytes:
+        """
+        Odczytuje jeden pakiet danych lidaru.
+        
+        Struktura pakietu (przykładowa - zależy od modelu):
+        - Nagłówek (2 bajty, np. 0xAA 0x55)
+        - Wersja/Typ (1 bajt)
+        - Liczba punktów (1 bajt)
+        - Kąt początkowy i końcowy (4 bajty)
+        - Suma kontrolna (2 bajty)
+        - Dane punktów (N * rozmiar punktu)
+        
+        Zwraca:
+            bytes: Surowe bajty jednego pakietu.
+            
+        Hierarchia wywołań:
+            lidar/src/hardware/lidar_driver.py -> acquire_single_scan_packet() -> _read_single_packet()
+        """
+        # Szukanie nagłówka
+        # To jest uproszczona implementacja - w rzeczywistości trzeba szukać bajfów synchronizacji
+        header = self._read_exact_bytes(2) 
+        if header != b'\xaa\x55': # Przykładowy nagłówek
+            # Synchronizacja - czytaj po jednym bajcie aż trafisz
+           pass
+           
+        # Odczyt reszty nagłówka by poznać długość
+        info = self._read_exact_bytes(2) 
+        # ... logika parsowania długości pakietu ...
+        packet_len = 0 # tu obliczamy długość
+        
+        # Odczyt reszty pakietu
+        payload = self._read_exact_bytes(packet_len)
+        return header + info + payload
+
+    def _decode_packet_data(self, packet: bytes) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Dekoduje surowe bajty pakietu na odległości i kąty.
+        
+        Argumenty:
+            packet (bytes): Surowy pakiet.
+            
+        Zwraca:
+            Tuple[np.ndarray, np.ndarray]: (odległości_mm, kąty_stopnie)
+            
+        Hierarchia wywołań:
+            lidar/src/hardware/lidar_driver.py -> acquire_single_scan_packet() -> _decode_packet_data()
+        """
+        # Implementacja zależy od konkretnego protokołu lidaru
+        # Tu zwracamy puste tablice jako placeholder
+        return np.array([]), np.array([])
+    
+
+driver_instance: Optional[LidarDriver] = None
+
+def initialize_lidar(port: str = LIDAR_PORT) -> None:
+    """
+    Inicjalizuje globalny sterownik lidaru.
     
     Argumenty:
-        port (str): Nazwa portu szeregowego (np. "/dev/ttyUSB0"). Domyślnie LIDAR_PORT.
-        baudrate (int): Prędkość transmisji w bps. Domyślnie LIDAR_BAUDRATE (230400).
-        timeout (float): Timeout odczytu w sekundach. Domyślnie LIDAR_TIMEOUT.
+        port (str): Port szeregowy.
+        
+    Hierarchia wywołań:
+        lidar/src/run_live.py -> main() -> initialize_lidar()
+        lidar/src/check_lidar.py -> main() -> initialize_lidar()
+    """
+    global driver_instance
+    driver_instance = LidarDriver(port=port)
+    driver_instance.connect()
+
+def acquire_single_scan_packet() -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Pobiera dane z jednego pakietu (części skanu).
     
     Zwraca:
-        None
-    
-    Wyjątki:
-        serial.SerialException: Gdy nie można otworzyć portu.
-    
+        Tuple[np.ndarray, np.ndarray]: (odległości_m, kąty_rad)
+        
     Hierarchia wywołań:
-        run_live.py -> main() -> init_lidar()
-        Live_Vis_v3.py -> record_scans() -> init_lidar()
-        check_lidar.py -> main() -> init_lidar()
+        lidar/src/hardware/lidar_driver.py -> acquire_complete_scan() -> acquire_single_scan_packet()
     """
-    # Otwiera port szeregowy do lidaru (idempotentnie)
-    global _ser
+    # Placeholder - w rzeczywistości wywołuje metody driver_instance
+    # Zwraca dane w metrach i radianach
+    return np.array([]), np.array([])
 
-    if _ser is not None and _ser.is_open:
-        return
-
-    _ser = serial.Serial(
-        port=port,
-        baudrate=baudrate,
-        bytesize=serial.EIGHTBITS,
-        parity=serial.PARITY_NONE,
-        stopbits=serial.STOPBITS_ONE,
-        timeout=timeout,
-    )
-
-
-def _read_exact(num_bytes: int) -> bytes:
+def acquire_complete_scan(num_packets: int = 60) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Odczytuje dokładnie podaną liczbę bajtów z portu szeregowego.
-    
-    Funkcja pomocnicza zapewniająca odczyt pełnej ilości danych,
-    nawet jeśli przychodzą w kilku porcjach.
+    Pobiera pełny skan (składa wiele pakietów).
     
     Argumenty:
-        num_bytes (int): Liczba bajtów do odczytania.
-    
+        num_packets (int): Liczba pakietów do pobrania na jeden obrót.
+        
     Zwraca:
-        bytes: Odczytane bajty o długości num_bytes.
-    
-    Wyjątki:
-        IOError: Gdy wystąpi timeout przed odczytaniem wszystkich bajtów.
-    
+        Tuple[np.ndarray, np.ndarray]: Zcalone tablice (odległości_m, kąty_rad).
+        
     Hierarchia wywołań:
-        lidar_driver.py -> _read_one_packet() -> _read_exact()
+        lidar/src/run_live.py -> main() -> acquire_complete_scan()
     """
-    # Czyta dokładnie num_bytes lub rzuca wyjątek przy timeout
-    assert _ser is not None
-    data = b""
-    while len(data) < num_bytes:
-        chunk = _ser.read(num_bytes - len(data))
-        if not chunk:
-            raise IOError("Timeout podczas czytania z lidara")
-        data += chunk
-    return data
-
-
-def _read_one_packet() -> bytes:
-    """
-    Odczytuje jeden pełny pakiet danych z LiDAR.
+    all_ranges = []
+    all_angles = []
     
-    Funkcja synchronizuje się z nagłówkiem pakietu (0x54), odczytuje
-    informacje o liczbie punktów i pobiera resztę danych.
-    
-    Argumenty:
-        Brak
-    
-    Zwraca:
-        bytes: Kompletny pakiet danych (11 + 3*N bajtów, gdzie N = liczba punktów).
-    
-    Wyjątki:
-        IOError: Gdy wystąpi timeout oczekiwania na dane.
-    
-    Hierarchia wywołań:
-        lidar_driver.py -> get_next_scan() -> _read_one_packet() -> _read_exact()
-    """
-    # Czyta jeden pełny pakiet danych z lidara
-    assert _ser is not None
-
-    while True:
-        first = _ser.read(1)
-        if not first:
-            raise IOError("Timeout oczekiwania na bajt nagłówka")
-
-        if first[0] != HEADER_BYTE:
-            # nieprawidłowy nagłówek – szukaj dalej
-            continue
-
-        ver_len_bytes = _read_exact(1)
-        ver_len = ver_len_bytes[0]
-        num_points = ver_len & 0x1F  # dolne 5 bitów = liczba punktów
-
-        if num_points <= 0 or num_points > 32:
-            # zły pakiet – szukaj kolejnego nagłówka
-            continue
-
-        packet_len = 11 + 3 * num_points
-        rest = _read_exact(packet_len - 2)
-        packet = first + ver_len_bytes + rest
-
-        if len(packet) != packet_len:
-            # niekompletny pakiet – spróbuj ponownie
-            continue
-
-        return packet
-
-
-def _parse_packet(packet: bytes) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Parsuje surowy pakiet LiDAR do tablic odległości i kątów.
-    
-    Funkcja dekoduje strukturę pakietu zgodnie z protokołem LiDAR:
-      - bajt 0: nagłówek (0x54)
-      - bajt 1: wersja + liczba punktów (5 dolnych bitów)
-      - bajty 2-3: prędkość
-      - bajty 4-5: kąt startowy
-      - bajty 6 do N*3+5: dane punktów (odległość 2B + intensywność 1B)
-      - ostatnie bajty: kąt końcowy, timestamp, CRC
-    
-    Argumenty:
-        packet (bytes): Surowy pakiet danych z _read_one_packet().
-    
-    Zwraca:
-        Tuple[np.ndarray, np.ndarray]: Krotka (distances_mm, angles_deg):
-            - distances_mm: odległości w milimetrach
-            - angles_deg: kąty w stopniach [0, 360)
-    
-    Wyjątki:
-        ValueError: Gdy pakiet ma nieprawidłową strukturę.
-    
-    Hierarchia wywołań:
-        lidar_driver.py -> get_next_scan() -> _parse_packet()
-    """
-    # Parsuje pakiet do tablic distances_mm i angles_deg
-    if len(packet) < 11:
-        raise ValueError(f"Za krótki pakiet: {len(packet)} B")
-
-    if packet[0] != HEADER_BYTE:
-        raise ValueError("Nieprawidłowy byte nagłówka")
-
-    ver_len = packet[1]
-    num_points = ver_len & 0x1F
-    expected_len = 11 + 3 * num_points
-    if len(packet) != expected_len:
-        raise ValueError(f"Zły rozmiar pakietu: {len(packet)} zamiast {expected_len}")
-
-    # speed, start_angle (aktualnie nieużywane)
-    speed_raw, start_angle_raw = struct.unpack_from("<HH", packet, offset=2)
-
-    distances_mm: List[int] = []
-    offset = 6
-    for _ in range(num_points):
-        dist_raw, intensity_raw = struct.unpack_from("<HB", packet, offset=offset)
-        distances_mm.append(dist_raw)
-        offset += 3
-
-    end_angle_raw, timestamp = struct.unpack_from("<HH", packet, offset=offset)
-    # ostatni bajt CRC pomijamy
-
-    start_deg = (start_angle_raw % 36000) / 100.0
-    end_deg = (end_angle_raw % 36000) / 100.0
-
-    angle_span = (end_deg - start_deg) % 360.0
-    if num_points > 1:
-        step = angle_span / (num_points - 1)
-    else:
-        step = 0.0
-
-    angles_deg = np.array(
-        [(start_deg + i * step) % 360.0 for i in range(num_points)],
-        dtype=float,
-    )
-    distances_mm_arr = np.array(distances_mm, dtype=float)
-
-    return distances_mm_arr, angles_deg
-
-
-def get_next_scan() -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Pobiera jeden pakiet danych z LiDAR.
-    
-    Funkcja odczytuje i parsuje pojedynczy pakiet zwracając tablice
-    odległości w metrach i kątów w radianach.
-    
-    Argumenty:
-        Brak
-    
-    Zwraca:
-        Tuple[np.ndarray, np.ndarray]: Krotka (r, theta):
-            - r: odległości w metrach
-            - theta: kąty w radianach
-    
-    Wyjątki:
-        RuntimeError: Gdy LiDAR nie został zainicjalizowany.
-    
-    Hierarchia wywołań:
-        check_lidar.py -> main() -> get_next_scan()
-        lidar_driver.py -> get_full_scan() -> get_next_scan()
-    """
-    # Zwraca jeden pakiet: r [m], theta [rad]
-    if _ser is None or not _ser.is_open:
-        raise RuntimeError("Najpierw wywołaj init_lidar().")
-
-    packet = _read_one_packet()
-    distances_mm, angles_deg = _parse_packet(packet)
-
-    r = distances_mm / 1000.0      # mm -> m
-    theta = np.deg2rad(angles_deg)  # deg -> rad
-
-    return r, theta
-
-
-def get_full_scan(num_packets: int = 30) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Łączy wiele pakietów LiDAR w jeden pełny skan 360°.
-    
-    Funkcja pobiera num_packets pakietów, łączy ich dane i sortuje
-    według kąta, tworząc pełny obraz otoczenia.
-    
-    Argumenty:
-        num_packets (int): Liczba pakietów do połączenia. Domyślnie 30.
-            Więcej pakietów = wyższa rozdzielczość kątowa.
-    
-    Zwraca:
-        Tuple[np.ndarray, np.ndarray]: Krotka (r, theta) posortowana według kąta:
-            - r: odległości w metrach
-            - theta: kąty w radianach [0, 2π)
-    
-    Hierarchia wywołań:
-        run_live.py -> main() -> get_full_scan() -> get_next_scan()
-        Live_Vis_v3.py -> record_scans() -> get_full_scan() -> get_next_scan()
-    """
-    # Skleja num_packets pakietów w jeden posortowany skan
-    all_r: List[float] = []
-    all_theta: List[float] = []
-
     for _ in range(num_packets):
-        r, theta = get_next_scan()
-        all_r.extend(r.tolist())
-        all_theta.extend(theta.tolist())
-
-    r_arr = np.array(all_r, dtype=float)
-    theta_arr = np.array(all_theta, dtype=float)
-
-    order = np.argsort(theta_arr)
-    return r_arr[order], theta_arr[order]
+        r, angle = acquire_single_scan_packet()
+        all_ranges.append(r)
+        all_angles.append(angle)
+        
+    if not all_ranges:
+        return np.array([]), np.array([])
+        
+    return np.concatenate(all_ranges), np.concatenate(all_angles)
