@@ -465,14 +465,37 @@ watus_jetson/
 │   ├── requirements.txt    # Zależności modułu LLM
 │   ├── .env.example        # Przykładowa konfiguracja środowiskowa
 │   └── README.md           # Dokumentacja modułu LLM
-└── warstwa_wizji/          # Moduł detekcji obiektów
-    ├── src/                # Kod źródłowy
-    ├── __init__.py         # Inicjalizacja modułu
-    ├── camera.json         # Konfiguracja kamery
-    ├── camera.jsonl        # Dane wyjściowe (kontekst wizualny)
-    ├── main.py             # Główny skrypt detekcji
-    ├── readme.txt          # Instrukcje i zależności
-    └── requirements.txt    # Zależności modułu wizji
+└── warstwa_wizji/              # Moduł detekcji obiektów (zmodularyzowany)
+    ├── __init__.py             # Inicjalizacja pakietu głównego
+    ├── main.py                 # Punkt wejścia (uruchamia CVAgent)
+    ├── camera.json             # Konfiguracja kamery
+    ├── camera.jsonl            # Dane wyjściowe (kontekst wizualny)
+    ├── requirements.txt        # Zależności modułu wizji
+    ├── models/                 # Wagi modeli YOLO (clothes.pt, guns.pt)
+    └── src/                    # Kod źródłowy
+        ├── __init__.py         # Eksport pakietu src
+        ├── cv_agent.py         # Główna klasa CVAgent (detekcja, śledzenie)
+        ├── cv_utils/           # Narzędzia przetwarzania obrazu
+        │   ├── __init__.py     # Eksport modułów cv_utils
+        │   ├── angle.py        # Obliczanie kąta obiektu względem kamery
+        │   ├── brightness.py   # Analiza jasności, sugerowanie trybu (light/dark)
+        │   ├── cv_wrapper.py   # Wrapper na model YOLO/RT-DETR
+        │   ├── detection_processors.py  # Przetwarzanie detekcji ubrań/broni
+        │   ├── frame_overlay.py         # Rysowanie nakładek wizualnych
+        │   ├── lidar_integration.py     # Integracja danych z LiDAR
+        │   ├── new_tracker.py           # Tracker Kalman + Hungarian
+        │   ├── old_tracker.py           # Tracker IoU (prosty)
+        │   └── parallel.py              # Przetwarzanie równoległe
+        ├── img_classifiers/    # Klasyfikatory obrazów
+        │   ├── __init__.py     # Eksport klasyfikatorów
+        │   ├── color_classifier.py      # Dominujący kolor (K-Means GPU)
+        │   ├── image_classifier.py      # Emocje, płeć, wiek, ubrania
+        │   ├── mil_object_classifier.py # Klasyfikator obiektów wojskowych
+        │   └── utils.py                 # Funkcje pomocnicze
+        └── model_trainer/      # Narzędzia do trenowania modeli
+            ├── data_visualizer.py  # Wizualizacja i analiza zbiorów danych
+            ├── yolo_dataset.py     # Ważony dataset YOLO
+            └── yolo_train.py       # Trener modeli YOLO
 ```
 
 Każdy z głównych katalogów (consolidator, lidar, warstwa_audio, warstwa_llm, warstwa_wizji) stanowi samodzielny moduł funkcjonalny z własnymi zależnościami, konfiguracją i dokumentacją. Taka organizacja pozwala na niezależny rozwój, testowanie oraz wdrażanie poszczególnych komponentów systemu.
@@ -483,50 +506,47 @@ Każdy z głównych katalogów (consolidator, lidar, warstwa_audio, warstwa_llm,
 
 ### Warstwa Wizji
 
-Warstwa wizji jest odpowiedzialna za przetwarzanie obrazu w czasie rzeczywistym, detekcję obiektów oraz generowanie opisów sceny dla pozostałych komponentów systemu. Moduł wykorzystuje bibliotekę Ultralytics, która oferuje wysoko wydajne implementacje modeli detekcji obiektów zoptymalizowane pod kątem inferencji na GPU NVIDIA.
+Warstwa wizji jest odpowiedzialna za przetwarzanie obrazu w czasie rzeczywistym, detekcję obiektów, klasyfikację atrybutów osób oraz integrację z danymi LiDAR. Moduł wykorzystuje zmodularyzowaną architekturę opartą na klasie `CVAgent`, która deleguje zadania do specjalistycznych modułów pomocniczych.
 
-#### Architektura Modułu
+#### Architektura Modułu (Zmodularyzowana)
 
-Moduł warstwy wizji składa się z następujących komponentów funkcjonalnych:
+Moduł warstwy wizji został zrefaktoryzowany do architektury modularnej składającej się z następujących komponentów:
 
-**Główny skrypt detekcji (`main.py`):** Inicjalizuje połączenie z kamerą (lokalną lub RTSP), ładuje wybrany model detekcji (YOLO lub RT-DETR) i uruchamia pętlę przetwarzania obrazu. Skrypt obsługuje wielowątkowe przetwarzanie, gdzie jedna kolejka odpowiada za przechwytywanie klatek, a druga za inferencję modelu. Wyniki detekcji są publikowane na szynie ZMQ w formacie JSON.
+**Punkt wejścia (`main.py`):** Prosty skrypt uruchamiający, który importuje i inicjalizuje klasę `CVAgent` z modułu `src/cv_agent.py`. Odpowiada za konfigurację środowiska i uruchomienie głównej pętli przetwarzania.
 
-**Moduł przetwarzania obrazu (`src/`):** Zawiera pomocnicze funkcje do preprocessingu obrazu, Non-Maximum Suppression (NMS) oraz formatowania wyników detekcji. Moduł implementuje również logikę śledzenia obiektów między klatkami (object tracking) dla scenariuszy wymagających ciągłości identyfikacji obiektów.
+**Główna klasa agenta (`src/cv_agent.py`):** Klasa `CVAgent` stanowi centralny punkt koordynacji przetwarzania wizyjnego. Obsługuje pobieranie obrazu z kamery/strumienia, detekcję obiektów (YOLO/RT-DETR), śledzenie, klasyfikację atrybutów (płeć, wiek, emocje, ubrania) oraz integrację z Lidarem.
 
-**Konfiguracja kamery (`camera.json`):** Plik JSON definiujący parametry źródła obrazu, rozdzielczość, liczbę klatek na sekundę oraz ewentualne transformacje geometryczne. Przykładowa konfiguracja:
+**Moduły pomocnicze (`src/cv_utils/`):**
+- `angle.py` — obliczanie kąta obiektu względem osi optycznej kamery
+- `brightness.py` — analiza jasności sceny, sugerowanie trybu wyświetlania (light/dark)
+- `cv_wrapper.py` — zunifikowany wrapper na modele detekcji YOLO/RT-DETR
+- `detection_processors.py` — przetwarzanie detekcji ubrań i broni, zarządzanie cache'em atrybutów
+- `frame_overlay.py` — rysowanie nakładek wizualnych (bounding boxy, info LiDAR, statystyki)
+- `lidar_integration.py` — odczyt danych LiDAR, dopasowywanie obiektów kamera-LiDAR
+- `old_tracker.py` / `new_tracker.py` — algorytmy śledzenia obiektów (IoU, Kalman+Hungarian)
 
-```json
-{
-    "camera": {
-        "type": "rtsp",
-        "url": "rtsp://adres_kamery:554/stream",
-        "width": 1280,
-        "height": 720,
-        "fps": 30
-    },
-    "detection": {
-        "model": "yolov8s.pt",
-        "confidence_threshold": 0.5,
-        "iou_threshold": 0.45
-    },
-    "output": {
-        "format": "jsonl",
-        "path": "camera.jsonl"
-    }
-}
-```
+**Klasyfikatory obrazów (`src/img_classifiers/`):**
+- `color_classifier.py` — dominujący kolor ubrań metodą K-Means na GPU
+- `image_classifier.py` — klasyfikatory emocji, płci, wieku, typu ubrania (HuggingFace)
+- `mil_object_classifier.py` — eksperymentalny klasyfikator obiektów wojskowych (DINOv3)
 
-**Plik wyjściowy (`camera.jsonl`):** Przechowuje najnowszy kontekst wizualny w formacie JSONL (JSON Lines), gdzie każda linia reprezentuje jedną klatkę z wynikami detekcji. Format ten umożliwia efektywne appendowanie danych oraz łatwe parsowanie przez kolejne komponenty systemu.
+**Narzędzia do trenowania (`src/model_trainer/`):**
+- `yolo_train.py` — trener modeli YOLO z obsługą augmentacji
+- `yolo_dataset.py` — ważony dataset do balansowania klas
+- `data_visualizer.py` — wizualizacja i analiza zbiorów danych
 
-#### Przepływ Przetwarzania
+#### Przepływ Przetwarzania w CVAgent
 
-Przetwarzanie obrazu w warstwie wizji przebiega według następującej sekwencji kroków:
+Przetwarzanie obrazu w klasie `CVAgent.run()` przebiega według następującej sekwencji:
 
-1. **Przechwytywanie klatki:** Moduł pobiera kolejną klatkę ze strumienia wideo (kamery lokalnej lub sieciowej RTSP). Klatka jest buforowana w kolejce wątku przechwytywania.
-2. **Preprocessing:** Klatka jest przekształcana do formatu oczekiwanego przez model detekcji — zmieniana jest kolejność kanałów (BGR do RGB), rozmiar dopasowywany jest do wymagań modelu, a wartości pikseli są normalizowane do zakresu [0, 1].
-3. **Inferencja modelu:** Przygotowany tensor jest przekazywany do modelu detekcji uruchomionego na GPU. Model zwraca tensor zawierający przewidywane bounding boxy, etykiety klas oraz współczynniki ufności.
-4. **Postprocessing:** Wyniki inferencji są filtrowane na podstawie progu ufności, a nadmiarowe bounding boxy dla tego samego obiektu są eliminowane poprzez algorytm Non-Maximum Suppression. Wykryte obiekty są mapowane na nazwy klas zgodnie z COCO dataset.
-5. **Publikacja wyników:** Przetworzone dane są serializowane do formatu JSON i publikowane na gniazdo PUB szyny ZMQ. Wiadomość zawiera znacznik czasowy, listę wykrytych obiektów (klasa, pozycja, rozmiar, ufność) oraz opcjonalnie ścieżkę do zapisanego obrazu z nałożonymi bounding boxami.
+1. **Przechwytywanie klatki:** Moduł pobiera klatkę ze strumienia (GStreamer UDP lub kamera lokalna).
+2. **Detekcja obiektów:** Model YOLO/RT-DETR wykrywa obiekty z jednoczesnym śledzeniem (`model.track()`).
+3. **Analiza jasności:** Funkcja `calc_brightness()` oblicza jasność sceny dla adaptacji UI.
+4. **Integracja LiDAR:** Funkcja `match_camera_to_lidar()` dopasowuje obiekty kamery do tracków LiDAR.
+5. **Przetwarzanie osób:** Dla wykrytych osób uruchamiane są klasyfikatory ubrań i atrybutów (z cache'owaniem).
+6. **Detekcja broni:** Opcjonalne uruchamianie modelu detekcji broni.
+7. **Wizualizacja:** Rysowanie bounding boxów, info LiDAR, statystyk FPS na klatce.
+8. **Publikacja wyników:** Zapis do pliku `camera.jsonl` w formacie JSON Lines.
 
 #### Konfiguracja Detekcji
 

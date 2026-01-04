@@ -1,185 +1,899 @@
-# Wielki Plan Unifikacji Systemu Watus Jetson (Szczegółowy)
+# Plan Unifikacji Systemu WATUS Jetson - Instrukcja Implementacji
 
-## Tło i Cel
+## Spis Tresci
+1. [Wprowadzenie](#wprowadzenie)
+2. [Modul 0: Fundamenty (watus_core)](#modul-0-fundamenty-watus_core)
+3. [Modul 1: Lidar (Migracja na ZMQ)](#modul-1-lidar-migracja-na-zmq)
+4. [Modul 2: Wizja (Migracja na ZMQ)](#modul-2-wizja-migracja-na-zmq)
+5. [Modul 3: Audio (Unifikacja)](#modul-3-audio-unifikacja)
+6. [Modul 4: Consolidator (Mozg Operacyjny)](#modul-4-consolidator-mozg-operacyjny)
+7. [Modul 5: Warstwa LLM (Brain)](#modul-5-warstwa-llm-brain)
+8. [Modul 6: Zarzadzanie Procesami](#modul-6-zarzadzanie-procesami)
+9. [Protokol Komunikacji ZMQ](#protokol-komunikacji-zmq)
+10. [Checklist Implementacji](#checklist-implementacji)
 
-Obecny system `watus_jetson` działa, ale jest "posklejany" z różnych kawałków, które komunikują się w sposób nieefektywny (pliki JSON na dysku) i są trudne w utrzymaniu. Celem jest stworzenie jednolitej, solidnej architektury, która będzie działać szybko, niezawodnie i będzie łatwa do rozwijania.
+---
 
-Poniższy plan jest rozpisany na bardzo małe, konkretne kroki. Traktuj go jak dokładną instrukcję montażu.
+## Wprowadzenie
 
-## Moduł 0: Fundamenty (watus_core)
+### Opis Problemu
+Obecny system WATUS Jetson dziala, ale jest "posklejany" z roznych kawalkow:
+- Moduly komunikuja sie przez pliki JSON na dysku (wolne, zawodne)
+- Kazdy modul ma wlasna konfiguracje w roznych miejscach
+- Brak centralnego loggera - wszedzie `print()`
+- Trudne debugowanie i utrzymanie
 
-Zanim zaczniemy cokolwiek zmieniać w logice, musimy stworzyć wspólny grunt. Obecnie każdy moduł radzi sobie sam. To się zmieni.
+### Cel Unifikacji
+Stworzenie jednolitej architektury z:
+- Centralnym modulem konfiguracji (watus_core)
+- Komunikacja przez ZeroMQ (szybka, niezawodna)
+- Wspolny logger
+- Latwe zarzadzanie procesami
 
-### Zadanie 0.1: Struktura Katalogów
+### Architektura Docelowa
 
-* [ ]  Utwórz na poziomie głównym folder `watus_core`.
-* [ ]  Utwórz w nim pusty plik `__init__.py`.
+```
++------------------------------------------------------------------+
+|                         watus_core/                               |
+|  +------------+  +------------+  +------------+                   |
+|  | config.py  |  | logger.py  |  | comm.py    |                   |
+|  | (.env)     |  | (logging)  |  | (ZMQ)      |                   |
+|  +------------+  +------------+  +------------+                   |
++------------------------------------------------------------------+
+        |                |                |
+        v                v                v
++-------------+  +-------------+  +-------------+  +-------------+
+|   lidar/    |  | warstwa_    |  | warstwa_    |  | warstwa_    |
+|             |  | wizji/      |  | audio/      |  | llm/        |
++-------------+  +-------------+  +-------------+  +-------------+
+        |                |                               |
+        v                v                               v
++------------------------------------------------------------------+
+|                      consolidator/                                |
+|              (laczy dane, publikuje world.state)                  |
++------------------------------------------------------------------+
+```
 
-### Zadanie 0.2: Centralna Konfiguracja (watus_core/config.py)
+---
 
-Zamiast szukać `.env` w różnych folderach, zrobimy jeden loader.
+## Modul 0: Fundamenty (watus_core)
 
-* [ ]  Stwórz plik `watus_core/config.py`.
+### Cel
+Utworzenie wspolnego modulu z konfiguacja, loggerem i komunikacja ZMQ.
 
-* **Kod:** Użyj biblioteki `python-dotenv`. Niech szuka pliku `.env` w katalogu głównym projektu (tam gdzie folder `.git`).
-* **Zadanie:** Zdefiniuj w nim klasę `Config` lub zestaw stałych, które pokrywają WSZYSTKIE potrzeby systemu.
-  * Wszystkie porty ZMQ (np. `ZMQ_PORT_LIDAR`, `ZMQ_PORT_VISION`, `ZMQ_PORT_AUDIO`).
-  * Ścieżki do modeli (YOLO, Whisper).
-  * Parametry urządzeń (ID kamery, port LiDARu).
-* **Weryfikacja:** Napisz mały skrypt `test_config.py`, który importuje `Config` i wypisuje jedną zmienną.
+### Krok 0.1: Struktura Katalogow
 
-### Zadanie 0.3: Wspólny Logger (watus_core/logger.py)
+**Czynnosci:**
+1. Utworz folder `watus_core` w glownym katalogu projektu:
+```bash
+mkdir c:\Users\pawel\Documents\GitHub\watus_jetson\watus_core
+```
 
-Koniec z `print("dupa")`.
+2. Utworz pusty plik `__init__.py`:
+```bash
+echo. > c:\Users\pawel\Documents\GitHub\watus_jetson\watus_core\__init__.py
+```
 
-* [ ]  Stwórz plik `watus_core/logger.py`.
+**Oczekiwany wynik:**
+```
+watus_jetson/
+|-- watus_core/
+    |-- __init__.py
+```
 
-* **Kod:** Skonfiguruj standardowy `logging` w Pythonie.
-  * Format: `%(asctime)s | %(levelname)s | %(name)s | %(message)s`
-  * Handler 1: Konsola (`StreamHandler`).
-  * Handler 2: Plik rotowany (`RotatingFileHandler`), np. `logs/watus_system.log`.
-* **Funkcja pomocnicza:** `get_logger(name)` która zwraca skonfigurowany logger.
+### Krok 0.2: Centralna Konfiguracja
 
-### Zadanie 0.4: Komunikacja ZMQ (watus_core/comm.py)
+**Plik do utworzenia:** `watus_core/config.py`
 
-To będzie krwiobieg systemu.
+**Zawartosc pliku:**
+```python
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-* [ ]  Stwórz plik `watus_core/comm.py`.
+# Znajdz katalog glowny projektu (tam gdzie .git)
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+ENV_FILE = PROJECT_ROOT / ".env"
 
-* **Klasa Publisher:**
-  * W `__init__` przyjmuje port i opcjonalnie bind/connect (zazwyczaj bind).
-  * Metoda `send(topic: str, data: dict)`:
-    * Dodaje timestamp: `data['ts'] = time.time()`.
-    * Serializuje do JSON.
-    * Wysyła multipart: `[topic.encode(), json_bytes]`.
-* **Klasa Subscriber:**
-  * W `__init__` przyjmuje listę portów lub adresów.
-  * Metoda `recv()` (z timeoutem lub non-blocking):
-    * Odbiera multipart.
-    * Deserializuje JSON.
-    * Zwraca `(topic, data)`.
+# Zaladuj zmienne srodowiskowe
+load_dotenv(ENV_FILE)
 
-## Moduł 1: Lidar (Migracja na ZMQ)
+class Config:
+    """Centralna konfiguracja systemu WATUS."""
+    
+    # === Porty ZMQ ===
+    ZMQ_PORT_LIDAR = int(os.getenv("ZMQ_PORT_LIDAR", "5555"))
+    ZMQ_PORT_VISION = int(os.getenv("ZMQ_PORT_VISION", "5556"))
+    ZMQ_PORT_AUDIO = int(os.getenv("ZMQ_PORT_AUDIO", "5557"))
+    ZMQ_PORT_WORLD = int(os.getenv("ZMQ_PORT_WORLD", "5558"))
+    ZMQ_PORT_ACTIONS = int(os.getenv("ZMQ_PORT_ACTIONS", "5559"))
+    
+    # === Sciezki do modeli ===
+    YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "warstwa_wizji/models/yolo12s.pt")
+    WHISPER_MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", "models/faster-whisper-medium")
+    
+    # === Urzadzenia ===
+    CAMERA_ID = int(os.getenv("CAMERA_ID", "0"))
+    LIDAR_PORT = os.getenv("LIDAR_PORT", "/dev/ttyUSB0")
+    AUDIO_INPUT_DEVICE = os.getenv("AUDIO_INPUT_DEVICE", None)
+    AUDIO_OUTPUT_DEVICE = os.getenv("AUDIO_OUTPUT_DEVICE", None)
+    
+    # === Flagi debugowania ===
+    SAVE_SESSION_LOGS = os.getenv("SAVE_SESSION_LOGS", "false").lower() == "true"
+    DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
-Lidar obecnie zarzyna dysk zapisując JSONa co klatkę.
 
-### Zadanie 1.1: Przełączenie `run_live.py`
+# Singleton dla latwego dostępu
+config = Config()
+```
 
-Plik: `lidar/src/run_live.py`.
+**Weryfikacja:**
+Utwórz plik testowy `watus_core/test_config.py`:
+```python
+from config import config
 
-* [ ]  Dodaj import: `from watus_core.comm import Publisher` oraz `from watus_core.config import Config`.
-* [ ]  W `main()`: Zainicjalizuj `pub = Publisher(port=Config.ZMQ_PORT_LIDAR)`.
-* [ ]  Znajdź funkcję `export_scan` (lub miejsce gdzie jest wywoływana).
-* [ ]  ZAMIAST pisać do pliku `lidar.json`, wywołaj `pub.send("sensor.lidar", { "tracks": ... })`.
-  * Format danych JSON zostaw taki sam, żeby nie popsuć logiki (chyba że jest tam mnóstwo śmieci, wtedy wyślij tylko listę obiektów/tracków).
-* [ ]  (Opcjonalnie) Zapis do plików sesji (`session_...`) możesz zostawić do debugowania, ale dodaj flagę `Config.SAVE_SESSION_LOGS = False` domyślnie.
+print(f"ZMQ_PORT_LIDAR: {config.ZMQ_PORT_LIDAR}")
+print(f"LIDAR_PORT: {config.LIDAR_PORT}")
+print("Config zaladowany pomyslnie!")
+```
 
-## Moduł 2: Wizja (Migracja na ZMQ)
+**Uruchomienie:**
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson\watus_core
+python test_config.py
+```
 
-Ta sama historia co z Lidarem.
+**Oczekiwany wynik:**
+```
+ZMQ_PORT_LIDAR: 5555
+LIDAR_PORT: /dev/ttyUSB0
+Config zaladowany pomyslnie!
+```
 
-### Zadanie 2.1: Przełączenie `warstwa_wizji/main.py`
+### Krok 0.3: Wspolny Logger
 
-* [ ]  Dodaj importy z `watus_core`.
-* [ ]  W klasie `CVAgent`, w metodzie `run`:
-  * Zainicjalizuj `self.pub = Publisher(port=Config.ZMQ_PORT_VISION)`.
-  * W pętli, po wykryciu obiektów: `self.pub.send("sensor.vision", detections)`.
-  * Usuń/zakomentuj zapis do `camera.json`.
+**Plik do utworzenia:** `watus_core/logger.py`
 
-## Moduł 3: Audio (Unifikacja)
+**Zawartosc pliku:**
+```python
+import logging
+import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-Audio już używa ZMQ, ale pewnie "po swojemu". Sprowadźmy to do standardu.
+# Katalog logow
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
-### Zadanie 3.1: Config i Logger
+def get_logger(name: str) -> logging.Logger:
+    """
+    Zwraca skonfigurowany logger.
+    
+    Uzycie:
+        from watus_core.logger import get_logger
+        logger = get_logger(__name__)
+        logger.info("Wiadomosc")
+    """
+    logger = logging.getLogger(name)
+    
+    # Unikaj wielokrotnego dodawania handlerow
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.DEBUG)
+    
+    # Format
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    
+    # Handler 1: Konsola
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    # Handler 2: Plik rotowany
+    file_handler = RotatingFileHandler(
+        LOG_DIR / "watus_system.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    return logger
+```
 
-* [ ]  Przejrzyj `warstwa_audio/watus_audio/config.py`. Zastąp lokalne zmienne odwołaniami do `watus_core.config`.
-* [ ]  Wszędzie gdzie jest `print`, użyj `watus_core.logger`.
+**Weryfikacja:**
+```python
+from logger import get_logger
 
-### Zadanie 3.2: Użycie wspólnego ZMQ
+logger = get_logger("test")
+logger.info("Test loggera")
+logger.debug("Debug message")
+logger.error("Error message")
+```
 
-* [ ]  Jeśli Audio ma własną klasę do ZMQ, podmień ją na `watus_core.comm`. Dzięki temu, jeśli kiedyś zmienimy JSON na inny format, zmienimy to tylko w jednym miejscu.
+**Oczekiwany wynik:**
+- W konsoli: wiadomosci INFO i ERROR
+- W pliku `logs/watus_system.log`: wszystkie wiadomosci
 
-## Moduł 4: Consolidator (Mózg Operacyjny)
+### Krok 0.4: Komunikacja ZMQ
 
-To jest najważniejsza zmiana architektoniczna. Consolidator przestaje być "czytaczem plików".
+**Plik do utworzenia:** `watus_core/comm.py`
 
-### Zadanie 4.1: Nowy `consolidator_zmq.py`
+**Zawartosc pliku:**
+```python
+import json
+import time
+import zmq
+from typing import Tuple, Optional, Any
 
-Stwórz nowy plik, nie psuj starego od razu.
+class Publisher:
+    """
+    Publisher ZMQ do wysylania danych.
+    
+    Uzycie:
+        pub = Publisher(port=5555)
+        pub.send("sensor.lidar", {"tracks": [...]})
+    """
+    
+    def __init__(self, port: int, bind: bool = True):
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.PUB)
+        
+        addr = f"tcp://127.0.0.1:{port}"
+        if bind:
+            self.socket.bind(addr)
+        else:
+            self.socket.connect(addr)
+    
+    def send(self, topic: str, data: dict) -> None:
+        """Wysyla dane z timestampem."""
+        data["ts"] = time.time()
+        json_bytes = json.dumps(data).encode("utf-8")
+        self.socket.send_multipart([topic.encode("utf-8"), json_bytes])
+    
+    def close(self) -> None:
+        self.socket.close()
+        self.context.term()
 
-* **Klasa WorldModel:**
 
-  * Trzyma w pamięci (zmienne instancji): `latest_lidar_data`, `latest_vision_data`, `latest_audio_status`.
-  * Metoda `update_lidar(data)`: Nadpisuje `latest_lidar_data`.
-  * Metoda `update_vision(data)`: Nadpisuje `latest_vision_data`.
-  * Metoda `fuse()`: Wykonuje logikę łączenia (tę samą co wcześniej: dopasowanie po kącie). Zwraca scalony stan świata.
-* **Pętla Główna (`main`):**
+class Subscriber:
+    """
+    Subscriber ZMQ do odbierania danych.
+    
+    Uzycie:
+        sub = Subscriber(ports=[5555, 5556])
+        topic, data = sub.recv()
+    """
+    
+    def __init__(self, ports: list, topics: list = None):
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.SUB)
+        
+        for port in ports:
+            self.socket.connect(f"tcp://127.0.0.1:{port}")
+        
+        # Subskrybuj tematy (pusty = wszystkie)
+        if topics:
+            for topic in topics:
+                self.socket.setsockopt_string(zmq.SUBSCRIBE, topic)
+        else:
+            self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
+    
+    def recv(self, timeout_ms: int = 100) -> Optional[Tuple[str, dict]]:
+        """Odbiera dane z timeoutem. Zwraca None jesli brak danych."""
+        if self.socket.poll(timeout_ms):
+            topic, json_bytes = self.socket.recv_multipart()
+            data = json.loads(json_bytes.decode("utf-8"))
+            return topic.decode("utf-8"), data
+        return None
+    
+    def close(self) -> None:
+        self.socket.close()
+        self.context.term()
+```
 
-  * `sub = Subscriber(ports=[Config.ZMQ_PORT_LIDAR, Config.ZMQ_PORT_VISION])`.
-  * `pub = Publisher(port=Config.ZMQ_PORT_WORLD)`.
-  * `model = WorldModel()`.
-  * `while True:`
-    * `topic, data = sub.recv()` (non-blocking).
-    * Jeśli przyszły dane -> zaktualizuj `model`.
-    * Raz na X milisekund (np. 100ms) -> `state = model.fuse()`.
-    * `pub.send("world.state", state)`.
+**Weryfikacja - utworz 2 pliki testowe:**
 
-## Moduł 5: Warstwa LLM (Brain)
+**Plik 1:** `watus_core/test_publisher.py`
+```python
+import time
+from comm import Publisher
 
-LLM musi wiedzieć co się dzieje, bez pytania.
+pub = Publisher(port=5555)
+print("Publisher uruchomiony na porcie 5555")
 
-### Zadanie 5.1: Kontekst w Pamięci
+for i in range(10):
+    pub.send("test.message", {"count": i, "text": f"Wiadomosc {i}"})
+    print(f"Wyslano: {i}")
+    time.sleep(1)
 
-W `warstwa_llm/src/main.py` (FastAPI):
+pub.close()
+```
 
-* [ ]  Przy starcie aplikacji uruchom w osobnym wątku (`threading.Thread`) prostego Subskrybenta ZMQ (`Config.ZMQ_PORT_WORLD`).
-* [ ]  Ten wątek aktualizuje zmienną globalną (np. `CURRENT_WORLD_CONTEXT`).
+**Plik 2:** `watus_core/test_subscriber.py`
+```python
+from comm import Subscriber
 
-### Zadanie 5.2: Wzbogacanie Promptu
+sub = Subscriber(ports=[5555])
+print("Subscriber polaczony, czekam na wiadomosci...")
+
+while True:
+    result = sub.recv(timeout_ms=1000)
+    if result:
+        topic, data = result
+        print(f"Odebrano [{topic}]: {data}")
+    else:
+        print("Brak wiadomosci...")
+```
+
+**Uruchomienie (2 terminale):**
+
+Terminal 1:
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson\watus_core
+python test_subscriber.py
+```
+
+Terminal 2:
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson\watus_core
+python test_publisher.py
+```
+
+**Oczekiwany wynik (Terminal 1):**
+```
+Subscriber polaczony, czekam na wiadomosci...
+Odebrano [test.message]: {'count': 0, 'text': 'Wiadomosc 0', 'ts': ...}
+Odebrano [test.message]: {'count': 1, 'text': 'Wiadomosc 1', 'ts': ...}
+...
+```
+
+---
+
+## Modul 1: Lidar (Migracja na ZMQ)
+
+### Cel
+Zastapienie zapisu do pliku `lidar.json` publikacja przez ZMQ.
+
+### Krok 1.1: Modyfikacja run_live.py
+
+**Plik do edycji:** `lidar/src/run_live.py`
+
+**Zmiany do wprowadzenia:**
+
+1. Dodaj importy na poczatku pliku:
+```python
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from watus_core.comm import Publisher
+from watus_core.config import config
+from watus_core.logger import get_logger
+
+logger = get_logger("lidar")
+```
+
+2. W funkcji `main()` dodaj inicjalizacje publishera:
+```python
+def main():
+    pub = Publisher(port=config.ZMQ_PORT_LIDAR)
+    logger.info(f"Lidar publisher na porcie {config.ZMQ_PORT_LIDAR}")
+    
+    # ... reszta kodu ...
+```
+
+3. Zamien zapis do pliku na publikacje ZMQ:
+```python
+# STARY KOD (zakomentuj):
+# with open("data/lidar.json", "w") as f:
+#     json.dump({"tracks": tracks_data}, f)
+
+# NOWY KOD:
+pub.send("sensor.lidar", {"tracks": tracks_data})
+logger.debug(f"Opublikowano {len(tracks_data)} trackow")
+```
+
+**Weryfikacja:**
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson\lidar
+python src/run_live.py
+```
+
+**Oczekiwany wynik:**
+```
+2026-01-04 16:30:00 | INFO | lidar | Lidar publisher na porcie 5555
+2026-01-04 16:30:01 | DEBUG | lidar | Opublikowano 2 trackow
+...
+```
+
+---
+
+## Modul 2: Wizja (Migracja na ZMQ)
+
+### Cel
+Zastapienie zapisu do pliku `camera.json` publikacja przez ZMQ.
+
+### Krok 2.1: Modyfikacja cv_agent.py
+
+**Plik do edycji:** `warstwa_wizji/src/cv_agent.py`
+
+**Zmiany do wprowadzenia:**
+
+1. Dodaj importy:
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from watus_core.comm import Publisher
+from watus_core.config import config
+from watus_core.logger import get_logger
+
+logger = get_logger("vision")
+```
+
+2. W metodzie `__init__` klasy CVAgent dodaj:
+```python
+def __init__(self, ...):
+    # ... istniejacy kod ...
+    
+    # Nowy publisher
+    self.pub = Publisher(port=config.ZMQ_PORT_VISION)
+    logger.info(f"Vision publisher na porcie {config.ZMQ_PORT_VISION}")
+```
+
+3. W metodzie `run()` zamien zapis JSON na ZMQ:
+```python
+# STARY KOD (zakomentuj):
+# if self.save_to_json is not None:
+#     self.save_to_json("camera.jsonl", detections)
+
+# NOWY KOD:
+self.pub.send("sensor.vision", detections)
+```
+
+---
+
+## Modul 3: Audio (Unifikacja)
+
+### Cel
+Zastapienie lokalnych printow i konfiguracji uzyciem watus_core.
+
+### Krok 3.1: Aktualizacja Konfiguracji
+
+**Plik do edycji:** `warstwa_audio/watus_audio/config.py`
+
+**Zmiany:**
+Na poczatku pliku dodaj:
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Import centralnej konfiguracji
+from watus_core.config import config as core_config
+
+# Uzyj portow z centralnej konfiguracji
+PUB_ADDR = f"tcp://127.0.0.1:{core_config.ZMQ_PORT_AUDIO}"
+```
+
+### Krok 3.2: Zamiana print na logger
+
+**Pliki do edycji:** Wszystkie pliki w `warstwa_audio/watus_audio/`
+
+**Zamiana:**
+```python
+# STARY KOD:
+print("[Watus] Jakas wiadomosc")
+
+# NOWY KOD:
+from watus_core.logger import get_logger
+logger = get_logger("audio")
+logger.info("Jakas wiadomosc")
+```
+
+---
+
+## Modul 4: Consolidator (Mozg Operacyjny)
+
+### Cel
+Przepisanie consolidatora z "czytacza plikow" na subskrybenta ZMQ.
+
+### Krok 4.1: Utworzenie consolidator_zmq.py
+
+**Plik do utworzenia:** `consolidator/consolidator_zmq.py`
+
+**Zawartosc pliku:**
+```python
+import sys
+import time
+import math
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from watus_core.comm import Publisher, Subscriber
+from watus_core.config import config
+from watus_core.logger import get_logger
+
+logger = get_logger("consolidator")
+
+CAMERA_FOV_HALF = 51.0
+
+class WorldModel:
+    """Model swiata laczacy dane z sensorow."""
+    
+    def __init__(self):
+        self.latest_lidar_data = None
+        self.latest_vision_data = None
+        self.last_lidar_ts = 0
+        self.last_vision_ts = 0
+    
+    def update_lidar(self, data: dict) -> None:
+        self.latest_lidar_data = data
+        self.last_lidar_ts = data.get("ts", time.time())
+        logger.debug(f"Lidar update: {len(data.get('tracks', []))} tracks")
+    
+    def update_vision(self, data: dict) -> None:
+        self.latest_vision_data = data
+        self.last_vision_ts = data.get("ts", time.time())
+        logger.debug(f"Vision update: {len(data.get('objects', []))} objects")
+    
+    def fuse(self) -> dict:
+        """Laczy dane z lidar i vision."""
+        combined_tracks = []
+        
+        if not self.latest_lidar_data:
+            return {"tracks": combined_tracks, "ts": time.time()}
+        
+        for track in self.latest_lidar_data.get("tracks", []):
+            entry = {
+                "id": track.get("id"),
+                "type": track.get("type", "unknown"),
+                "last_position": track.get("last_position"),
+                "source": "lidar"
+            }
+            
+            # Dopasuj do vision jesli dostepne
+            if self.latest_vision_data and self.latest_vision_data.get("objects"):
+                cam_obj = self.latest_vision_data["objects"][0]
+                angle_camera = cam_obj.get("angle", 0)
+                angle_lidar = self._compute_lidar_angle(track)
+                
+                if abs(angle_camera - angle_lidar) <= CAMERA_FOV_HALF:
+                    entry["gender"] = cam_obj.get("type")
+                    entry["camera_bbox"] = {
+                        "left": cam_obj.get("left"),
+                        "top": cam_obj.get("top"),
+                        "width": cam_obj.get("width"),
+                        "height": cam_obj.get("height")
+                    }
+                    entry["source"] = "fused"
+            
+            combined_tracks.append(entry)
+        
+        return {"tracks": combined_tracks, "ts": time.time()}
+    
+    def _compute_lidar_angle(self, track: dict) -> float:
+        pos = track.get("last_position", [0, 1])
+        return math.degrees(math.atan2(pos[0], pos[1]))
+
+
+def main():
+    logger.info("Uruchamiam Consolidator ZMQ")
+    
+    # Subskrybent dla Lidar i Vision
+    sub = Subscriber(
+        ports=[config.ZMQ_PORT_LIDAR, config.ZMQ_PORT_VISION]
+    )
+    
+    # Publisher dla World State
+    pub = Publisher(port=config.ZMQ_PORT_WORLD)
+    
+    model = WorldModel()
+    last_fuse_time = 0
+    FUSE_INTERVAL_MS = 100
+    
+    logger.info(f"Subskrybuje porty: {config.ZMQ_PORT_LIDAR}, {config.ZMQ_PORT_VISION}")
+    logger.info(f"Publikuje na porcie: {config.ZMQ_PORT_WORLD}")
+    
+    try:
+        while True:
+            result = sub.recv(timeout_ms=10)
+            
+            if result:
+                topic, data = result
+                if topic == "sensor.lidar":
+                    model.update_lidar(data)
+                elif topic == "sensor.vision":
+                    model.update_vision(data)
+            
+            # Fuzja co FUSE_INTERVAL_MS
+            current_time = time.time() * 1000
+            if current_time - last_fuse_time >= FUSE_INTERVAL_MS:
+                state = model.fuse()
+                pub.send("world.state", state)
+                last_fuse_time = current_time
+    
+    except KeyboardInterrupt:
+        logger.info("Zamykam Consolidator")
+    finally:
+        sub.close()
+        pub.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Uruchomienie:**
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson\consolidator
+python consolidator_zmq.py
+```
+
+**Oczekiwany wynik:**
+```
+2026-01-04 16:30:00 | INFO | consolidator | Uruchamiam Consolidator ZMQ
+2026-01-04 16:30:00 | INFO | consolidator | Subskrybuje porty: 5555, 5556
+2026-01-04 16:30:00 | INFO | consolidator | Publikuje na porcie: 5558
+```
+
+---
+
+## Modul 5: Warstwa LLM (Brain)
+
+### Cel
+Wzbogacenie LLM o kontekst z world.state.
+
+### Krok 5.1: Subskrypcja World State
+
+**Plik do edycji:** `warstwa_llm/src/main.py`
+
+**Zmiany:**
+1. Dodaj import i watek subskrybenta:
+```python
+import threading
+from watus_core.comm import Subscriber
+from watus_core.config import config
+
+CURRENT_WORLD_CONTEXT = {}
+CONTEXT_LOCK = threading.Lock()
+
+def world_context_thread():
+    sub = Subscriber(ports=[config.ZMQ_PORT_WORLD])
+    while True:
+        result = sub.recv(timeout_ms=100)
+        if result:
+            _, data = result
+            with CONTEXT_LOCK:
+                global CURRENT_WORLD_CONTEXT
+                CURRENT_WORLD_CONTEXT = data
+
+# Uruchom watek przy starcie
+threading.Thread(target=world_context_thread, daemon=True).start()
+```
+
+### Krok 5.2: Wzbogacanie Promptu
 
 W funkcji `process_question`:
+```python
+def format_world_context() -> str:
+    with CONTEXT_LOCK:
+        tracks = CURRENT_WORLD_CONTEXT.get("tracks", [])
+    
+    if not tracks:
+        return "Nie widze zadnych obiektow."
+    
+    descriptions = []
+    for t in tracks:
+        pos = t.get("last_position", [0, 0])
+        dist = math.sqrt(pos[0]**2 + pos[1]**2)
+        desc = f"{t.get('type', 'obiekt')} ({dist:.1f}m)"
+        if t.get("gender"):
+            desc += f", {t['gender']}"
+        descriptions.append(desc)
+    
+    return "Widze: " + ", ".join(descriptions)
 
-* [ ]  Przed wysłaniem pytania do LLM, pobierz `CURRENT_WORLD_CONTEXT`.
-* [ ]  Sformatuj to jako tekst (np. "Widzę: Jan Kowalski (3m, 15 stopni w lewo), Nieznany Obiekt (5m).").
-* [ ]  Doklej to do promptu systemowego lub user message.
+# W process_question:
+context = format_world_context()
+enriched_prompt = f"{context}\n\nUzytkownik: {user_question}"
+```
 
-* **Rezultat:** LLM wie co widzi robot w czasie rzeczywistym!
+---
 
-## Moduł 6: Zarządzanie Procesami (Ecosystem Watchdog)
+## Modul 6: Zarzadzanie Procesami
 
-Żeby nie odpalać 5 terminali.
+### Krok 6.1: Konfiguracja Ecosystem
 
-### Zadanie 6.1: `ecosystem.json`
-
-Plik konfiguracyjny definiujący jakie procesy mają działać.
+**Plik do utworzenia:** `ecosystem.json`
 
 ```json
 [
-  { "name": "lidar", "cmd": "python lidar/src/run_live.py", "cwd": "." },
-  { "name": "vision", "cmd": "python warstwa_wizji/main.py", "cwd": "." },
-  { "name": "audio", "cmd": "python warstwa_audio/run_watus.py", "cwd": "." },
-  { "name": "consolidator", "cmd": "python consolidator/consolidator_zmq.py", "cwd": "." },
-  { "name": "brain", "cmd": "python warstwa_llm/src/main.py", "cwd": "." }
+  {
+    "name": "lidar",
+    "cmd": "python lidar/src/run_live.py",
+    "cwd": "."
+  },
+  {
+    "name": "vision",
+    "cmd": "python warstwa_wizji/main.py",
+    "cwd": "."
+  },
+  {
+    "name": "audio",
+    "cmd": "python warstwa_audio/run_watus.py",
+    "cwd": "."
+  },
+  {
+    "name": "consolidator",
+    "cmd": "python consolidator/consolidator_zmq.py",
+    "cwd": "."
+  },
+  {
+    "name": "brain",
+    "cmd": "python warstwa_llm/src/main.py",
+    "cwd": "."
+  }
 ]
 ```
 
-### Zadanie 6.2: `run_system.py`
+### Krok 6.2: Skrypt Uruchamiajacy
 
-Skrypt w Pythonie:
+**Plik do utworzenia:** `run_system.py`
 
-* [ ]  Wczytuje `ecosystem.json`.
-* [ ]  Dla każdego wpisu tworzy `subprocess.Popen`.
-* [ ]  Monitoruje w pętli `poll()`.
-* [ ]  Jeśli proces padł (zwrócił kod != 0 lub None), restartuje go po 5 sekundach i loguje błąd.
-* [ ]  Obsługuje Ctrl+C -> zabija wszystkie procesy potomne.
+```python
+import json
+import subprocess
+import signal
+import sys
+import time
+from pathlib import Path
 
-## Podsumowanie Protokołu Komunikacji (ZMQ Topics)
+from watus_core.logger import get_logger
 
+logger = get_logger("ecosystem")
 
-| Temat            | Nadawca      | Odbiorca      | Treść (przykład)                                                 |
-| ---------------- | ------------ | ------------- | ------------------------------------------------------------------- |
-| `sensor.lidar`   | Lidar        | Consolidator  | `{ "tracks": [ { "id": 1, "pos": [2.0, 1.0] } ] }`                  |
-| `sensor.vision`  | Wizja        | Consolidator  | `{ "objects": [ { "label": "person", "bbox": [...] } ] }`           |
-| `world.state`    | Consolidator | Brain (LLM)   | `{ "entities": [ { "id": 1, "type": "person", "merged": true } ] }` |
-| `user.voice_cmd` | Audio        | Brain (LLM)   | `{ "text": "Co widzisz?", "speaker": "Pawel" }`                     |
-| `robot.action`   | Brain (LLM)  | Audio / Motor | `{ "action": "speak", "payload": "Widzę człowieka." }`            |
+processes = {}
+
+def load_config():
+    with open("ecosystem.json", "r") as f:
+        return json.load(f)
+
+def start_process(config: dict) -> subprocess.Popen:
+    logger.info(f"Uruchamiam: {config['name']}")
+    return subprocess.Popen(
+        config["cmd"].split(),
+        cwd=config.get("cwd", "."),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT
+    )
+
+def signal_handler(sig, frame):
+    logger.info("Otrzymano sygnal zakonczenia")
+    for name, proc in processes.items():
+        logger.info(f"Zamykam: {name}")
+        proc.terminate()
+    sys.exit(0)
+
+def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    configs = load_config()
+    
+    for config in configs:
+        processes[config["name"]] = start_process(config)
+        time.sleep(1)  # Daj czas na start
+    
+    logger.info(f"Uruchomiono {len(processes)} procesow")
+    
+    # Monitoring
+    while True:
+        for name, proc in list(processes.items()):
+            ret = proc.poll()
+            if ret is not None:
+                logger.warning(f"Proces {name} zakonczyl sie kodem {ret}")
+                # Restart
+                for cfg in configs:
+                    if cfg["name"] == name:
+                        time.sleep(5)
+                        processes[name] = start_process(cfg)
+                        break
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+**Uruchomienie:**
+```bash
+cd c:\Users\pawel\Documents\GitHub\watus_jetson
+python run_system.py
+```
+
+**Oczekiwany wynik:**
+```
+2026-01-04 16:30:00 | INFO | ecosystem | Uruchamiam: lidar
+2026-01-04 16:30:01 | INFO | ecosystem | Uruchamiam: vision
+2026-01-04 16:30:02 | INFO | ecosystem | Uruchamiam: audio
+2026-01-04 16:30:03 | INFO | ecosystem | Uruchamiam: consolidator
+2026-01-04 16:30:04 | INFO | ecosystem | Uruchamiam: brain
+2026-01-04 16:30:05 | INFO | ecosystem | Uruchomiono 5 procesow
+```
+
+---
+
+## Protokol Komunikacji ZMQ
+
+### Tematy i Format Danych
+
+| Temat | Nadawca | Odbiorca | Format |
+|-------|---------|----------|--------|
+| `sensor.lidar` | Lidar | Consolidator | `{"tracks": [...], "ts": ...}` |
+| `sensor.vision` | Wizja | Consolidator | `{"objects": [...], "ts": ...}` |
+| `world.state` | Consolidator | Brain (LLM) | `{"tracks": [...], "ts": ...}` |
+| `user.voice_cmd` | Audio | Brain (LLM) | `{"text": "...", "speaker": "..."}` |
+| `robot.action` | Brain (LLM) | Audio/Motor | `{"action": "speak", "payload": "..."}` |
+
+### Przykladowe Dane
+
+**sensor.lidar:**
+```json
+{
+  "tracks": [
+    {"id": "abc123", "last_position": [2.0, 3.0], "type": "human"}
+  ],
+  "ts": 1704380400.123
+}
+```
+
+**sensor.vision:**
+```json
+{
+  "objects": [
+    {"type": "person", "angle": 15.5, "left": 100, "top": 50, "width": 150, "height": 300}
+  ],
+  "countOfPeople": 1,
+  "ts": 1704380400.125
+}
+```
+
+**world.state:**
+```json
+{
+  "tracks": [
+    {"id": "abc123", "type": "human", "source": "fused", "gender": "male"}
+  ],
+  "ts": 1704380400.200
+}
+```
+
+---
+
+## Checklist Implementacji
+
+| Krok | Opis | Status |
+|------|------|--------|
+| 0.1 | Utworz folder watus_core | [ ] |
+| 0.2 | Utworz config.py | [ ] |
+| 0.3 | Utworz logger.py | [ ] |
+| 0.4 | Utworz comm.py | [ ] |
+| 0.5 | Przetestuj ZMQ pub/sub | [ ] |
+| 1.1 | Zmodyfikuj lidar/run_live.py | [ ] |
+| 2.1 | Zmodyfikuj warstwa_wizji/cv_agent.py | [ ] |
+| 3.1 | Zunifikuj warstwa_audio/config.py | [ ] |
+| 3.2 | Zamien print na logger w audio | [ ] |
+| 4.1 | Utworz consolidator_zmq.py | [ ] |
+| 5.1 | Dodaj subskrypcje world.state do LLM | [ ] |
+| 5.2 | Wzbogac prompt o context | [ ] |
+| 6.1 | Utworz ecosystem.json | [ ] |
+| 6.2 | Utworz run_system.py | [ ] |
+| 6.3 | Przetestuj caly system | [ ] |

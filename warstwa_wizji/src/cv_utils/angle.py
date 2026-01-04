@@ -1,51 +1,59 @@
+"""
+Moduł obliczania kąta obiektu względem osi kamery.
+
+Zawiera funkcję do szacowania poziomego kąta między osią optyczną kamery
+a środkiem wykrytego obiektu na podstawie jego pozycji w obrazie.
+
+Hierarchia wywołań:
+    warstwa_wizji/main.py -> CVAgent.run() -> calc_obj_angle()
+"""
+
 import math
 from typing import Tuple
 
+
 def calc_obj_angle(
-    p1: Tuple[float, float],
-    p2: Tuple[float, float],
+    top_left_point: Tuple[float, float],
+    bottom_right_point: Tuple[float, float],
     image_width: int,
     fov_deg: float = 102.0,
 ) -> float:
     """
-    Szacuje poziomy kąt (w stopniach) między frontem kamery (oś optyczna)
-    a środkiem obiektu. Pomija detekcję – zkłada, że p1 i p2 to dwa
-    dowolne przeciwległe narożniki prostokąta obiektu w obrazie.
-
-    Parametry:
-      p1, p2      : (x, y) w pikselach
-      image_size  : (width, height) obrazu w pikselach
-      fov_deg     : poziomy kąt widzenia kamery w stopniach
-
+    Oblicza poziomy kąt (w stopniach) między osią optyczną kamery
+    a środkiem wykrytego obiektu.
+    
+    Funkcja szacuje kąt na podstawie pozycji obiektu w obrazie,
+    wykorzystując parametry kamery (szerokość obrazu i pole widzenia).
+    Kąt dodatni oznacza obiekt po prawej stronie, ujemny - po lewej.
+    
+    Argumenty:
+        top_left_point (Tuple[float, float]): Współrzędne (x, y) lewego górnego rogu obiektu.
+        bottom_right_point (Tuple[float, float]): Współrzędne (x, y) prawego dolnego rogu obiektu.
+        image_width (int): Szerokość obrazu w pikselach.
+        fov_deg (float): Poziome pole widzenia kamery (FOV) w stopniach.
+        
     Zwraca:
-      Kąt w stopniach (dodatni w prawo, ujemny w lewo).
-      
+        float: Kąt w stopniach względem osi optycznej kamery.
+               Dodatni = obiekt po prawej, ujemny = obiekt po lewej.
+        
     Hierarchia wywołań:
         warstwa_wizji/main.py -> CVAgent.run() -> calc_obj_angle()
-        warstwa_wizji/src/cv_utils/angle.py -> main() (test)
     """
-    (x1, y1), (x2, y2) = p1, p2
-    W = image_width
-
-    # Środek prostokąta obiektu
-    x_c = 0.5 * (x1 + x2)
-
-    # Środek obrazu (oś optyczna)
-    c_x = W / 2.0
-
-    # Ogniskowa w pikselach wyliczona z FOV
+    (x1, _), (x2, _) = top_left_point, bottom_right_point
+    
+    # Oblicz środek obiektu w osi X
+    object_center_x = 0.5 * (x1 + x2)
+    
+    # Środek obrazu (oś optyczna kamery)
+    image_center_x = image_width / 2.0
+    
+    # Oblicz ogniskową w pikselach na podstawie pola widzenia
     fov_rad = math.radians(fov_deg)
-    fx = (W / 2.0) / math.tan(fov_rad / 2.0)
-
-    # Kąt w radianach -> stopnie
-    theta_rad = math.atan((x_c - c_x) / fx)
-    theta_deg = math.degrees(theta_rad)
-    return theta_deg
-
-# --- przykład użycia ---
-if __name__ == "__main__":
-    # prostokąt obiektu (dwa rogi), obraz 1920x1080, FOV=60°
-    p1 = (100, 300)
-    p2 = (200, 600)
-    angle = calc_obj_angle(p1, p2, (1920, 1080), 60.0)
-    print(f"Kąt względem osi kamery: {angle:.2f}°")
+    focal_length_pixels = (image_width / 2.0) / math.tan(fov_rad / 2.0)
+    
+    # Oblicz kąt w radianach i zamień na stopnie
+    offset_from_center = object_center_x - image_center_x
+    angle_rad = math.atan(offset_from_center / focal_length_pixels)
+    angle_deg = math.degrees(angle_rad)
+    
+    return angle_deg

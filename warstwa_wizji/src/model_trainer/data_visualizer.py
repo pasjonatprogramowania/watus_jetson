@@ -1,3 +1,15 @@
+"""
+Moduł wizualizacji i analizy zbiorów danych YOLO.
+
+Narzędzie do analizy zbiorów danych w formacie YOLO. Generuje wykresy
+rozkładu klas, statystyki bounding boxów, mapy gęstości i eksportuje
+dane sumaryczne do JSON/CSV.
+
+Hierarchia wywołań:
+    python data_visualizer.py --data data.yaml --out output_dir
+    -> main() -> analyze_dataset() -> plot_*() -> export_*()
+"""
+
 from __future__ import annotations
 import argparse
 import json
@@ -19,10 +31,22 @@ load_dotenv()
 from yolo_dataset import YOLOWeightedDataset
 build.YOLODataset = YOLOWeightedDataset
 
-# ——— Pomocnicze struktury ———
 
 @dataclass
 class YoloBox:
+    """
+    Reprezentacja pojedynczego bounding boxa w formacie YOLO.
+    
+    Atrybuty:
+        cls (int): ID klasy obiektu.
+        x (float): Środek X (znormalizowany 0-1).
+        y (float): Środek Y (znormalizowany 0-1).
+        w (float): Szerokość (znormalizowana 0-1).
+        h (float): Wysokość (znormalizowana 0-1).
+        img_w (int): Szerokość obrazu źródłowego w pikselach.
+        img_h (int): Wysokość obrazu źródłowego w pikselach.
+        image_path (Path): Ścieżka do obrazu źródłowego.
+    """
     cls: int
     x: float
     y: float
@@ -34,64 +58,110 @@ class YoloBox:
 
     @property
     def area_rel(self) -> float:
-        # pole w ułamku powierzchni obrazu
+        """Zwraca pole bbox jako ułamek powierzchni obrazu."""
         return max(self.w, 0.0) * max(self.h, 0.0)
 
     @property
     def aspect(self) -> float:
-        # proporcja w/h
+        """Zwraca proporcję szerokości do wysokości (w/h)."""
         return self.w / self.h if self.h > 0 else np.nan
 
     @property
     def width_px(self) -> float:
+        """Zwraca szerokość bbox w pikselach."""
         return self.w * self.img_w
 
     @property
     def height_px(self) -> float:
+        """Zwraca wysokość bbox w pikselach."""
         return self.h * self.img_h
 
     @property
     def center(self) -> Tuple[float, float]:
+        """Zwraca współrzędne środka jako krotkę (x, y)."""
         return (self.x, self.y)
 
 
-# ——— Parsowanie YOLO ———
-
 def load_yaml(path: Path) -> dict:
+    """
+    Wczytuje plik YAML i zwraca jako słownik.
+    
+    Argumenty:
+        path (Path): Ścieżka do pliku YAML.
+        
+    Zwraca:
+        dict: Zawartość pliku jako słownik.
+    """
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+
 def to_paths(x) -> List[Path]:
-    # Entry w .yaml może być stringiem do folderu, listą plików .txt z listą ścieżek,
-    # albo listą katalogów/plików; normalizujemy to do listy ścieżek obrazów.
+    """
+    Konwertuje różne formaty wejścia na listę ścieżek Path.
+    
+    Entry w .yaml może być stringiem do folderu, listą plików .txt
+    lub listą katalogów/plików.
+    
+    Argumenty:
+        x: String, lista lub None.
+        
+    Zwraca:
+        List[Path]: Lista obiektów Path.
+    """
     if x is None:
         return []
     if isinstance(x, (list, tuple)):
         return [Path(s) for s in x]
     return [Path(x)]
 
+
 def expand_split_to_images(entry: Path) -> List[Path]:
-    # Jeżeli podano plik .txt z listą obrazów — wczytaj.
-    # Jeżeli katalog — zbierz typowe rozszerzenia.
+    """
+    Rozszerza wpis splitu do listy ścieżek obrazów.
+    
+    Obsługuje trzy formaty:
+    - Plik .txt z listą ścieżek obrazów
+    - Katalog z obrazami (szuka rekurencyjnie)
+    - Bezpośrednia ścieżka do pojedynczego obrazu
+    
+    Argumenty:
+        entry (Path): Wpis do rozwinięcia.
+        
+    Zwraca:
+        List[Path]: Lista ścieżek do obrazów.
+    """
     if entry.is_file() and entry.suffix.lower() == ".txt":
         with open(entry, "r", encoding="utf-8") as f:
             return [Path(line.strip()) for line in f if line.strip()]
-    # Katalog z obrazami
+    
     if entry.is_dir():
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
         return sorted([p for p in entry.rglob("*") if p.suffix.lower() in exts])
-    # Gdy to bezpośrednia ścieżka do obrazu
+    
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
     if entry.suffix.lower() in exts and entry.exists():
         return [entry]
     return []
 
+
 def image_to_label_path(img_path: Path, data_root: Optional[Path]=None) -> Path:
     """
-    Próbuje przemapować .../images/.../name.jpg -> .../labels/.../name.txt (standard YOLO),
-    ale jeżeli dane mają nietypową strukturę, spróbuje labela w tym samym folderze.
+    Mapuje ścieżkę obrazu na ścieżkę pliku etykiety.
+    
+    Próbuje różne strategie:
+    1. Standard YOLO: .../images/... -> .../labels/...
+    2. Równoległy katalog labels
+    3. Ten sam folder co obraz
+    4. Szukanie po nazwie w drzewie katalogów
+    
+    Argumenty:
+        img_path (Path): Ścieżka do obrazu.
+        data_root (Path): Opcjonalny katalog główny zbioru.
+        
+    Zwraca:
+        Path: Ścieżka do pliku etykiety (lub znacznik .missing.txt).
     """
-    # Standard: zamień 'images' -> 'labels' i rozszerzenie -> .txt
     parts = list(img_path.parts)
     try:
         idx = parts.index("images")
@@ -102,34 +172,51 @@ def image_to_label_path(img_path: Path, data_root: Optional[Path]=None) -> Path:
     except ValueError:
         pass
 
-    # Alternatywa: /labels równoległy do /images
     if "images" in img_path.parts:
         i = parts.index("images")
         candidate = Path(*parts[:i], "labels", *parts[i+1:]).with_suffix(".txt")
         if candidate.exists():
             return candidate
 
-    # Ostatecznie: ten sam folder, ta sama nazwa .txt
     same = img_path.with_suffix(".txt")
     if same.exists():
         return same
 
-    # Szukaj po nazwie w całym drzewie (droższe, tylko jako fallback)
     if data_root and data_root.exists():
         name = img_path.stem + ".txt"
         for p in data_root.rglob(name):
             if p.suffix.lower() == ".txt":
                 return p
 
-    return img_path.with_suffix(".missing.txt")  # nieistniejący znacznik
+    return img_path.with_suffix(".missing.txt")
+
 
 def read_image_size(p: Path) -> Tuple[int, int]:
+    """
+    Odczytuje wymiary obrazu bez pełnego ładowania.
+    
+    Argumenty:
+        p (Path): Ścieżka do obrazu.
+        
+    Zwraca:
+        Tuple[int, int]: Szerokość i wysokość obrazu.
+    """
     with Image.open(p) as im:
-        return im.size  # (w, h)
+        return im.size
+
 
 def parse_label_file(lbl_path: Path) -> List[Tuple[int, float, float, float, float]]:
     """
-    Zwraca listę rekordów: (cls, x, y, w, h) w notacji YOLO (wartości znormalizowane).
+    Parsuje plik etykiety YOLO.
+    
+    Każda linia zawiera: klasa x_center y_center width height
+    Wartości są znormalizowane do zakresu 0-1.
+    
+    Argumenty:
+        lbl_path (Path): Ścieżka do pliku etykiety.
+        
+    Zwraca:
+        List[Tuple]: Lista rekordów (cls, x, y, w, h).
     """
     items = []
     if not lbl_path.exists():
@@ -150,7 +237,18 @@ def parse_label_file(lbl_path: Path) -> List[Tuple[int, float, float, float, flo
                 continue
     return items
 
+
 def collect_images_from_yaml(data_yaml: Path, splits: List[str]) -> Tuple[List[Path], Dict[int, str], Optional[Path]]:
+    """
+    Zbiera wszystkie obrazy ze wskazanych splitów na podstawie pliku data.yaml.
+    
+    Argumenty:
+        data_yaml (Path): Ścieżka do pliku data.yaml.
+        splits (List[str]): Lista splitów do zebrania (np. ["train", "val"]).
+        
+    Zwraca:
+        Tuple: (lista_obrazów, słownik_nazw_klas, ścieżka_główna).
+    """
     data = load_yaml(data_yaml)
     names = {}
     if "names" in data:
@@ -158,7 +256,6 @@ def collect_images_from_yaml(data_yaml: Path, splits: List[str]) -> Tuple[List[P
             names = {int(k): str(v) for k, v in data["names"].items()}
         elif isinstance(data["names"], list):
             names = {i: str(n) for i, n in enumerate(data["names"])}
-    # YOLO czasem podaje 'path' jako root dla względnych ścieżek
 
     root = Path(data.get("path", data_yaml)).resolve()
 
@@ -173,20 +270,43 @@ def collect_images_from_yaml(data_yaml: Path, splits: List[str]) -> Tuple[List[P
             imgs = expand_split_to_images(e)
             all_images.extend(imgs)
 
-    # deduplikacja
     all_images = sorted(list({p.resolve() for p in all_images if p.exists()}))
     return all_images, names, root
 
-# ——— Analiza ———
 
 @dataclass
 class DatasetStats:
+    """
+    Kontener na statystyki zbioru danych.
+    
+    Atrybuty:
+        boxes (List[YoloBox]): Lista wszystkich bounding boxów.
+        classes_count (Counter): Licznik wystąpień każdej klasy.
+        imgs_obj_count (List[int]): Liczba obiektów na każdym obrazie.
+        img_sizes (List[Tuple]): Wymiary każdego obrazu.
+    """
     boxes: List[YoloBox]
     classes_count: Counter
     imgs_obj_count: List[int]
     img_sizes: List[Tuple[int, int]]
 
+
 def analyze_dataset(images: List[Path], names: Dict[int, str], data_root: Optional[Path], max_images: int = 0) -> DatasetStats:
+    """
+    Analizuje zbiór danych i zbiera statystyki.
+    
+    Przetwarza wszystkie obrazy i ich etykiety, zbierając informacje
+    o klasach, rozmiarach i rozmieszczeniu obiektów.
+    
+    Argumenty:
+        images (List[Path]): Lista ścieżek do obrazów.
+        names (Dict[int, str]): Mapowanie ID klas na nazwy.
+        data_root (Path): Katalog główny zbioru danych.
+        max_images (int): Limit obrazów (0 = wszystkie).
+        
+    Zwraca:
+        DatasetStats: Zebrane statystyki.
+    """
     boxes: List[YoloBox] = []
     classes_count: Counter = Counter()
     imgs_obj_count: List[int] = []
@@ -200,7 +320,6 @@ def analyze_dataset(images: List[Path], names: Dict[int, str], data_root: Option
             w, h = read_image_size(img)
             img_sizes.append((w, h))
         except Exception:
-            # pomiń uszkodzone obrazy
             continue
 
         lbl = image_to_label_path(img, data_root)
@@ -212,18 +331,29 @@ def analyze_dataset(images: List[Path], names: Dict[int, str], data_root: Option
 
     return DatasetStats(boxes=boxes, classes_count=classes_count, imgs_obj_count=imgs_obj_count, img_sizes=img_sizes)
 
-# ——— Wykresy ———
 
 def ensure_out(out_dir: Path):
+    """Tworzy katalog wyjściowy jeśli nie istnieje."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
+
 def save_fig(path: Path, tight=True, dpi=150):
+    """Zapisuje bieżący wykres matplotlib do pliku."""
     if tight:
         plt.tight_layout()
     plt.savefig(path, dpi=dpi)
     plt.close()
 
+
 def plot_class_distribution(stats: DatasetStats, names: Dict[int, str], out: Path):
+    """
+    Generuje wykres słupkowy rozkładu klas obiektów.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        names (Dict[int, str]): Mapowanie ID klas na nazwy.
+        out (Path): Katalog wyjściowy.
+    """
     if not stats.classes_count:
         return
     labels = sorted(stats.classes_count.keys())
@@ -237,7 +367,15 @@ def plot_class_distribution(stats: DatasetStats, names: Dict[int, str], out: Pat
     plt.title("Rozkład klas (obiekty na zbiorze)")
     save_fig(out / "classes_bar.png")
 
+
 def plot_objects_per_image(stats: DatasetStats, out: Path):
+    """
+    Generuje histogram liczby obiektów na obraz.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+    """
     data = np.array(stats.imgs_obj_count, dtype=float)
     plt.figure(figsize=(8, 4))
     plt.hist(data, bins=min(50, max(5, int(np.sqrt(len(data))))))
@@ -246,7 +384,15 @@ def plot_objects_per_image(stats: DatasetStats, out: Path):
     plt.title("Histogram: obiekty na obraz")
     save_fig(out / "objects_per_image.png")
 
+
 def plot_bbox_area(stats: DatasetStats, out: Path):
+    """
+    Generuje histogram rozkładu powierzchni bounding boxów.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+    """
     if not stats.boxes:
         return
     areas = np.array([b.area_rel for b in stats.boxes], dtype=float)
@@ -257,7 +403,15 @@ def plot_bbox_area(stats: DatasetStats, out: Path):
     plt.title("Histogram: pole bbox (znormalizowane)")
     save_fig(out / "bbox_area_rel.png")
 
+
 def plot_bbox_aspect(stats: DatasetStats, out: Path):
+    """
+    Generuje histogram proporcji bounding boxów (szerokość/wysokość).
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+    """
     if not stats.boxes:
         return
     aspects = np.array([b.aspect for b in stats.boxes if not math.isnan(b.aspect)], dtype=float)
@@ -268,7 +422,15 @@ def plot_bbox_aspect(stats: DatasetStats, out: Path):
     plt.title("Histogram: proporcje bbox (w/h)")
     save_fig(out / "bbox_aspect.png")
 
+
 def plot_bbox_w_vs_h(stats: DatasetStats, out: Path):
+    """
+    Generuje wykres rozrzutu szerokości vs wysokości bounding boxów.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+    """
     if not stats.boxes:
         return
     ws = np.array([b.w for b in stats.boxes], dtype=float)
@@ -280,7 +442,16 @@ def plot_bbox_w_vs_h(stats: DatasetStats, out: Path):
     plt.title("Rozrzut: szerokość vs wysokość bbox (rel.)")
     save_fig(out / "bbox_w_vs_h.png")
 
+
 def plot_centers_heatmap(stats: DatasetStats, out: Path, bins: int = 50):
+    """
+    Generuje mapę gęstości centrów bounding boxów.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+        bins (int): Liczba binów histogramu 2D.
+    """
     if not stats.boxes:
         return
     centers = np.array([b.center for b in stats.boxes], dtype=float)
@@ -293,7 +464,15 @@ def plot_centers_heatmap(stats: DatasetStats, out: Path, bins: int = 50):
     plt.title("Mapa gęstości centrów bbox")
     save_fig(out / "centers_heatmap.png")
 
+
 def plot_image_resolutions(stats: DatasetStats, out: Path):
+    """
+    Generuje wykres rozrzutu rozdzielczości obrazów.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        out (Path): Katalog wyjściowy.
+    """
     if not stats.img_sizes:
         return
     sizes = np.array(stats.img_sizes, dtype=float)
@@ -305,9 +484,16 @@ def plot_image_resolutions(stats: DatasetStats, out: Path):
     plt.title("Rozdzielczości obrazów")
     save_fig(out / "image_resolutions.png")
 
-# ——— Eksport statystyk ———
 
 def export_summary(stats: DatasetStats, names: Dict[int, str], out: Path):
+    """
+    Eksportuje podsumowanie statystyk do pliku JSON.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        names (Dict[int, str]): Mapowanie ID klas na nazwy.
+        out (Path): Katalog wyjściowy.
+    """
     summary = {
         "num_images": len(stats.img_sizes),
         "num_objects": int(sum(stats.classes_count.values())),
@@ -325,7 +511,17 @@ def export_summary(stats: DatasetStats, names: Dict[int, str], out: Path):
     with open(out / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
+
 def export_objects_csv(stats: DatasetStats, names: Dict[int, str], out: Path, max_rows: int = 0):
+    """
+    Eksportuje listę wszystkich obiektów do pliku CSV.
+    
+    Argumenty:
+        stats (DatasetStats): Statystyki zbioru danych.
+        names (Dict[int, str]): Mapowanie ID klas na nazwy.
+        out (Path): Katalog wyjściowy.
+        max_rows (int): Limit wierszy (0 = wszystkie).
+    """
     rows = []
     for b in stats.boxes:
         rows.append({
@@ -351,9 +547,14 @@ def export_objects_csv(stats: DatasetStats, names: Dict[int, str], out: Path, ma
         for r in rows:
             writer.writerow(r)
 
-# ——— Główna ścieżka ———
 
 def main():
+    """
+    Główna funkcja uruchamiająca analizę zbioru danych.
+    
+    Parsuje argumenty wiersza poleceń, wczytuje zbiór danych,
+    generuje wykresy i eksportuje statystyki.
+    """
     parser = argparse.ArgumentParser(description="Analiza zbioru YOLO (YOLOv12/YOLOv5/YOLOv8 zgodny format).")
     parser.add_argument("--data", type=str, required=True, help="Ścieżka do pliku dataset.yaml")
     parser.add_argument("--out", type=str, default="analysis_out", help="Katalog na wyniki (obrazy/JSON/CSV)")
@@ -376,7 +577,7 @@ def main():
 
     stats = analyze_dataset(images, names, data_root, max_images=0)
 
-    # Wykresy
+    # Generuj wykresy
     print("[INFO] Rysowanie wykresów...")
     plot_class_distribution(stats, names, out_dir)
     plot_objects_per_image(stats, out_dir)
@@ -386,7 +587,7 @@ def main():
     plot_centers_heatmap(stats, out_dir)
     plot_image_resolutions(stats, out_dir)
 
-    # Eksport
+    # Eksportuj dane
     print("[INFO] Zapisywanie podsumowań...")
     export_summary(stats, names, out_dir)
     export_objects_csv(stats, names, out_dir, max_rows=0)
@@ -394,6 +595,7 @@ def main():
     print(f"[GOTOWE] Wyniki zapisane w: {out_dir}")
     print("Pliki: classes_bar.png, objects_per_image.png, bbox_area_rel.png, bbox_aspect.png, "
           "bbox_w_vs_h.png, centers_heatmap.png, image_resolutions.png, summary.json, objects.csv")
+
 
 if __name__ == "__main__":
     main()
