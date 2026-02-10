@@ -1,13 +1,24 @@
 import os
 import sys
+import io
 import time
+import json
 import struct
+import base64
 import subprocess
 import tempfile
 import sounddevice as sd
 import soundfile as sf
 from .common import log_message
 from . import config
+
+# Sprawdzenie dostępności requests (dla Inworld TTS)
+try:
+    import requests as _requests_lib
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    log_message("[Watus][TTS] requests nie dostępne - pip install requests (wymagane dla Inworld TTS)")
 
 # Sprawdzenie dostępności Piper
 try:
@@ -395,9 +406,119 @@ def synthesize_speech_xtts(text_to_synthesize: str, audio_output_device_index):
         log_message(f"[Watus][TTS] XTTS error: {e}")
 
 
+def synthesize_speech_inworld(text_to_synthesize: str, audio_output_device_index):
+    """
+    Generuje mowę za pomocą Inworld TTS API (streaming) i odtwarza ją.
+    
+    Używa endpointu streamingowego: POST https://api.inworld.ai/tts/v1/voice:stream
+    Format audio: LINEAR16 (PCM 16-bit), konfigurowalny sample rate.
+    
+    Argumenty:
+        text_to_synthesize (str): Tekst do syntezy (max 2000 znaków).
+        audio_output_device_index (int): Indeks urządzenia wyjściowego audio.
+        
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_and_play() -> synthesize_speech_inworld()
+    """
+    if not text_to_synthesize or not text_to_synthesize.strip():
+        return
+
+    if not REQUESTS_AVAILABLE:
+        log_message("[Watus][TTS] Inworld TTS wymaga biblioteki 'requests' - pip install requests")
+        return
+
+    if not config.INWORLD_API_KEY:
+        log_message("[Watus][TTS] INWORLD_API_KEY nie ustawiony! Pobierz z: https://platform.inworld.ai/")
+        return
+
+    try:
+        log_message(f"[Watus][TTS] Generating Inworld TTS for: {text_to_synthesize[:50]}...")
+        start_time = time.time()
+
+        url = "https://api.inworld.ai/tts/v1/voice:stream"
+        headers = {
+            "Authorization": f"Basic {config.INWORLD_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "text": text_to_synthesize,
+            "voiceId": config.INWORLD_VOICE,
+            "modelId": config.INWORLD_MODEL,
+            "audio_config": {
+                "audio_encoding": "LINEAR16",
+                "sample_rate_hertz": config.INWORLD_SAMPLE_RATE,
+            },
+        }
+
+        # Dodaj prędkość mówienia jeśli inna niż domyślna
+        if config.INWORLD_SPEED != 1.0:
+            payload["talkingSpeed"] = config.INWORLD_SPEED
+
+        response = _requests_lib.post(url, json=payload, headers=headers, stream=True, timeout=30)
+        response.raise_for_status()
+
+        # Zbieranie chunków audio ze streamu
+        raw_audio_data = io.BytesIO()
+        first_chunk_time = None
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            if first_chunk_time is None:
+                first_chunk_time = time.time()
+
+            try:
+                chunk = json.loads(line)
+                audio_content_b64 = chunk.get("result", {}).get("audioContent", "")
+                if not audio_content_b64:
+                    continue
+                audio_chunk_bytes = base64.b64decode(audio_content_b64)
+
+                # Pomiń nagłówek WAV w chunkach (44 bajty)
+                if len(audio_chunk_bytes) > 44:
+                    raw_audio_data.write(audio_chunk_bytes[44:])
+                else:
+                    raw_audio_data.write(audio_chunk_bytes)
+            except (json.JSONDecodeError, KeyError) as e:
+                log_message(f"[Watus][TTS] Inworld chunk parse error: {e}")
+                continue
+
+        audio_bytes = raw_audio_data.getvalue()
+        if not audio_bytes:
+            log_message("[Watus][TTS] Inworld: brak danych audio w odpowiedzi")
+            return
+
+        # Zbuduj pełny plik WAV z zebranych surowych danych PCM
+        import wave
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit = 2 bajty
+            wf.setframerate(config.INWORLD_SAMPLE_RATE)
+            wf.writeframes(audio_bytes)
+
+        wav_buffer.seek(0)
+        audio_samples_array, sample_rate_hz = sf.read(wav_buffer, dtype='float32')
+
+        sd.play(audio_samples_array, sample_rate_hz, device=audio_output_device_index, blocking=True)
+
+        ttfb = f", TTFB={int((first_chunk_time - start_time) * 1000)}ms" if first_chunk_time else ""
+        log_message(f"[Perf] Inworld_TTS_play_ms={int((time.time() - start_time) * 1000)}{ttfb}")
+
+    except _requests_lib.exceptions.HTTPError as e:
+        log_message(f"[Watus][TTS] Inworld HTTP error: {e.response.status_code} - {e.response.text[:200]}")
+    except _requests_lib.exceptions.ConnectionError:
+        log_message("[Watus][TTS] Inworld: brak połączenia z API")
+    except _requests_lib.exceptions.Timeout:
+        log_message("[Watus][TTS] Inworld: timeout połączenia")
+    except Exception as e:
+        log_message(f"[Watus][TTS] Inworld TTS error: {e}")
+
+
 def synthesize_speech_and_play(text_to_synthesize: str, audio_output_device_index):
     """
-    Uniwersalna funkcja TTS - wybiera Piper, Gemini lub XTTS w zależności od konfiguracji.
+    Uniwersalna funkcja TTS - wybiera Piper, Gemini, XTTS lub Inworld w zależności od konfiguracji.
     
     Argumenty:
         text_to_synthesize (str): Tekst do wypowiedzenia.
@@ -411,6 +532,9 @@ def synthesize_speech_and_play(text_to_synthesize: str, audio_output_device_inde
     if provider == "gemini":
         log_message("[Watus][TTS] Using Gemini TTS")
         synthesize_speech_gemini(text_to_synthesize, audio_output_device_index)
+    elif provider == "inworld":
+        log_message("[Watus][TTS] Using Inworld TTS")
+        synthesize_speech_inworld(text_to_synthesize, audio_output_device_index)
     elif provider == "xtts":
         log_message("[Watus][TTS] Using XTTS-v2")
         synthesize_speech_xtts(text_to_synthesize, audio_output_device_index)

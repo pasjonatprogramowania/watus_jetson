@@ -23,6 +23,7 @@ SUB_ADDR = os.environ.get("ZMQ_SUB_ADDR", "tcp://127.0.0.1:7781")
 # Możliwe wartości:
 #   - 'piper': Lokalny silnik, wymaga modelu ONNX.
 #   - 'gemini': Zdalny API Google Gemini.
+#   - 'inworld': Zdalny API Inworld AI (https://inworld.ai/tts).
 TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "gemini").lower()
 
 # Konfiguracja Piper TTS
@@ -40,6 +41,19 @@ GEMINI_VOICE = os.environ.get("GEMINI_VOICE", "Callirrhoe")
 XTTS_MODEL_PATH = os.environ.get("XTTS_MODEL_PATH") # Opcjonalnie, jeśli manualnie
 XTTS_SPEAKER_WAV = os.environ.get("XTTS_SPEAKER_WAV", "models/xtts/ref.wav")
 XTTS_LANGUAGE = os.environ.get("XTTS_LANGUAGE", "pl")
+
+# Konfiguracja Inworld TTS
+# Klucz API w formacie Base64 (pobierz z: https://platform.inworld.ai/)
+INWORLD_API_KEY = os.environ.get("INWORLD_API_KEY")
+# Model Inworld TTS.
+# Możliwe wartości: "inworld-tts-1", "inworld-tts-1-max", "inworld-tts-1.5-mini", "inworld-tts-1.5-max"
+INWORLD_MODEL = os.environ.get("INWORLD_MODEL", "inworld-tts-1.5-max")
+# Głos Inworld. Przykłady: "Ashley", "Dennis", itp.
+INWORLD_VOICE = os.environ.get("INWORLD_VOICE", "Ashley")
+# Częstotliwość próbkowania audio dla Inworld (Hz). Domyślnie 48000.
+INWORLD_SAMPLE_RATE = int(os.environ.get("INWORLD_SAMPLE_RATE", "48000"))
+# Prędkość mówienia Inworld (0.5 - 1.5). Domyślnie 1.0.
+INWORLD_SPEED = float(os.environ.get("INWORLD_SPEED", "1.0"))
 
 # === Rozpoznawanie Mowy (STT) ===
 # Wybór dostawcy STT.

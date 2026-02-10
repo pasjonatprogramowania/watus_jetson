@@ -31,11 +31,11 @@ share/python-wheels/
 MANIFEST
 
 # --- Wirtualne Środowiska (Virtual Environments) ---
-# Blokuje standardowe nazwy venv wszędzie w projekcie
-venv/
-.venv/
+# Blokuje dowolne venv wszędzie w projekcie (venv, venv-win, .venv-linux, itp.)
+**/venv*/
+**/.venv*/
+**/venv-*/
 env/
-.env/
 ENV/
 env.bak/
 venv.bak/
