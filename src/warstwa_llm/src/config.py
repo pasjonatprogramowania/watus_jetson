@@ -6,7 +6,9 @@ from pydantic_ai.providers.google import GoogleProvider
 # from pydantic_ai.providers.ollama import OllamaProvider
 # from pydantic_ai.models.openai import OpenAIChatModel
 
-load_dotenv(".env")
+# Ładowanie zmiennych środowiskowych z głównego pliku .env projektu
+_PROJECT_ROOT_ENV = pathlib.Path(__file__).resolve().parent.parent.parent.parent / ".env"
+load_dotenv(dotenv_path=_PROJECT_ROOT_ENV, override=True)
 
 ### LLM CONFIGURATION
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "")
@@ -38,15 +40,25 @@ DISTANCES = 'distances'
 
 ### PATHS
 QUESTIONS_JSONL = "questions.jsonl"
-PROJECT_ROOT = pathlib.Path(__file__).parent.parent.absolute()
-SRC_DIR = pathlib.Path(__file__).parent.absolute()
+
+# Główny katalog projektu (watus_jetson/)
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent.parent
+# Katalog modułu LLM (src/warstwa_llm/)
+MODULE_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SRC_DIR = pathlib.Path(__file__).resolve().parent
+
+# Ścieżki w głównym katalogu projektu
 DATA_DIR = PROJECT_ROOT / "data"
+DATA_LLM_DIR = DATA_DIR / "warstwa_llm"
+DATA_FOLDER = str(DATA_LLM_DIR)
 LOGS_DIR = PROJECT_ROOT / "logs"
-CONFIG_DIR = PROJECT_ROOT / "config"
-TESTS_DIR = PROJECT_ROOT / "tests"
 ENV_FILE = PROJECT_ROOT / ".env"
 CHROMADB_PATH = str(PROJECT_ROOT / "chroma_db")
-QUESTION_FILES_PATH = DATA_DIR / "test" / "questions.jsonl"
+QUESTION_FILES_PATH = DATA_LLM_DIR / "questions.jsonl"
+
+# Ścieżki specyficzne dla modułu LLM
+CONFIG_DIR = MODULE_ROOT / "config"
+TESTS_DIR = MODULE_ROOT / "tests"
 
 DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_TEST_DIR = DATA_DIR / "test"

@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import time
 import uuid
 import uuid
 import logging
@@ -22,12 +24,16 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = "knowledge_base"
 SUPPORTED_EXTENSIONS = [".jsonl"]
 
+# Opóźnienie między zapytaniami API (sekundy).
+# Darmowy tier Gemini: 10 req/min → min. 6s między zapytaniami.
+API_REQUEST_DELAY = 7.0
+MAX_RETRIES = 5
+
+
 def generate_metadata(conversation_content: str) -> DocumentMetadata:
     """
     Generuje metadane dla treści rozmowy używając agenta LLM.
-
-    Analizuje treść rozmowy i wyciąga słowa kluczowe, tematy i inne metadane
-    zgodnie z modelem `DocumentMetadata`.
+    Zawiera mechanizm retry z exponential backoff dla błędów rate limit (429).
 
     Argumenty:
         conversation_content (str): Treść rozmowy w formacie tekstowym/JSON.
@@ -38,10 +44,27 @@ def generate_metadata(conversation_content: str) -> DocumentMetadata:
     Hierarchia wywołań:
         src.logic.vectordb.py -> generate_metadata() -> src.logic.llm.run_agent_with_logging()
     """
-    metadata, _ = run_agent_with_logging(
-        conversation_content, "metadata_agent", DOCUMENT_METADATA_SYSTEM_PROMPT, DocumentMetadata
-    )
-    return metadata
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            metadata, _ = run_agent_with_logging(
+                conversation_content, "metadata_agent", DOCUMENT_METADATA_SYSTEM_PROMPT, DocumentMetadata
+            )
+            return metadata
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                # Spróbuj wyciągnąć czas oczekiwania z odpowiedzi API
+                retry_match = re.search(r'retry\s*(?:in|Delay["\s:]*)\s*["\']?(\d+)', error_str, re.IGNORECASE)
+                wait_time = int(retry_match.group(1)) + 5 if retry_match else 30 * attempt
+                logger.warning(
+                    f"Rate limit (429) — próba {attempt}/{MAX_RETRIES}. "
+                    f"Czekam {wait_time}s..."
+                )
+                print(f"  [RATE LIMIT] Próba {attempt}/{MAX_RETRIES}. Czekam {wait_time}s...")
+                time.sleep(wait_time)
+            else:
+                raise
+    raise Exception(f"Przekroczono {MAX_RETRIES} prób z powodu rate limit.")
 
 
 def process_file(file_path: str) -> List[ProcessingResult]:
@@ -49,7 +72,7 @@ def process_file(file_path: str) -> List[ProcessingResult]:
     Przetwarza pojedynczy plik rozmowy i zwraca listę wyników.
 
     Odczytuje plik linia po linii (format JSONL), generuje metadane dla każdego wpisu
-    i tworzy obiekty `ProcessingResult`.
+    i tworzy obiekty `ProcessingResult`. Zawiera opóźnienie między zapytaniami API.
 
     Argumenty:
         file_path (str): Ścieżka do pliku do przetworzenia.
@@ -65,24 +88,30 @@ def process_file(file_path: str) -> List[ProcessingResult]:
     results = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    document_content = json.loads(line)
-                    metadata = generate_metadata(json.dumps(document_content))
-                    result = ProcessingResult(
-                        filename=Path(file_path).name,
-                        document_content=document_content,
-                        metadata=metadata,
-                        processing_id=str(uuid.uuid4())
-                    )
-                    results.append(result)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Pomijanie nieprawidłowego JSON w linii {line_num} w {file_path}: {e}")
-                except Exception as e:
-                    logger.error(f"Błąd przetwarzania linii {line_num} w {file_path}: {e}")
+            lines = [l.strip() for l in f if l.strip()]
+
+        total = len(lines)
+        for line_num, line in enumerate(lines, 1):
+            try:
+                document_content = json.loads(line)
+                print(f"  [{line_num}/{total}] Generowanie metadanych...")
+                metadata = generate_metadata(json.dumps(document_content))
+                result = ProcessingResult(
+                    filename=Path(file_path).name,
+                    document_content=document_content,
+                    metadata=metadata,
+                    processing_id=str(uuid.uuid4())
+                )
+                results.append(result)
+
+                # Opóźnienie między zapytaniami, aby nie przekroczyć rate limitu
+                if line_num < total:
+                    time.sleep(API_REQUEST_DELAY)
+
+            except json.JSONDecodeError as e:
+                logger.warning(f"Pomijanie nieprawidłowego JSON w linii {line_num} w {file_path}: {e}")
+            except Exception as e:
+                logger.error(f"Błąd przetwarzania linii {line_num} w {file_path}: {e}")
 
         logger.info(f"Pomyślnie przetworzono {len(results)} rozmów z {file_path}")
         return results

@@ -3,7 +3,6 @@ import sys
 import io
 import time
 import json
-import struct
 import base64
 import subprocess
 import tempfile
@@ -174,73 +173,81 @@ def synthesize_speech_piper(text_to_synthesize: str, audio_output_device_index):
         log_message(f"[Perf] TTS_play_ms={int((time.time() - start_time) * 1000)}")
 
 
-def _add_wav_header(raw_audio_bytes: bytes, mime_type_string: str) -> bytes:
-    """
-    Generuje nagłówek WAV dla surowych danych audio.
-    
-    Hierarchia wywołań:
-        tts.py -> synthesize_speech_gemini() -> _add_wav_header()
-    """
-    audio_params = _parse_audio_mime_type(mime_type_string)
-    bits_per_sample = audio_params["bits_per_sample"]
-    sample_rate_hz = audio_params["rate"]
-    num_channels = 1
-    data_size_bytes = len(raw_audio_bytes)
-    bytes_per_sample = bits_per_sample // 8
-    block_align = num_channels * bytes_per_sample
-    byte_rate = sample_rate_hz * block_align
-    chunk_size = 36 + data_size_bytes
+import asyncio
+import numpy as np
 
-    wav_header = struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
-        b"RIFF",          # ChunkID
-        chunk_size,       # ChunkSize (total file size - 8 bytes)
-        b"WAVE",          # Format
-        b"fmt ",          # Subchunk1ID
-        16,               # Subchunk1Size (16 for PCM)
-        1,                # AudioFormat (1 for PCM)
-        num_channels,     # NumChannels
-        sample_rate_hz,   # SampleRate
-        byte_rate,        # ByteRate
-        block_align,      # BlockAlign
-        bits_per_sample,  # BitsPerSample
-        b"data",          # Subchunk2ID
-        data_size_bytes   # Subchunk2Size (size of audio data)
+
+async def _synthesize_speech_gemini_live(text_to_synthesize: str, audio_output_device_index):
+    """
+    Generuje mowę za pomocą Gemini Live API (WebSocket) i odtwarza ją.
+    
+    Używa `client.aio.live.connect()` do nawiązania sesji WebSocket,
+    wysyła tekst przez `send_client_content()`, odbiera chunki audio PCM
+    i odtwarza je przez sounddevice.
+    
+    Argumenty:
+        text_to_synthesize (str): Tekst do syntezy.
+        audio_output_device_index (int): Indeks urządzenia wyjściowego.
+        
+    Hierarchia wywołań:
+        tts.py -> synthesize_speech_gemini() -> _synthesize_speech_gemini_live()
+    """
+    client = genai.Client(
+        api_key=config.GEMINI_API_KEY,
+        http_options={"api_version": "v1beta"},
     )
-    return wav_header + raw_audio_bytes
 
+    live_config = types.LiveConnectConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=config.GEMINI_VOICE
+                )
+            )
+        ),
+    )
 
-def _parse_audio_mime_type(mime_type_string: str) -> dict:
-    """
-    Parsuje parametry audio (rate, bits) z typu MIME.
-    
-    Hierarchia wywołań:
-        tts.py -> _add_wav_header() -> _parse_audio_mime_type()
-    """
-    bits_per_sample = 16
-    rate_hz = 24000
+    start_time = time.time()
+    audio_chunks = []
 
-    parts = mime_type_string.split(";")
-    for param in parts:
-        param = param.strip()
-        if param.lower().startswith("rate="):
-            try:
-                rate_str = param.split("=", 1)[1]
-                rate_hz = int(rate_str)
-            except (ValueError, IndexError):
-                pass
-        elif param.startswith("audio/L"):
-            try:
-                bits_per_sample = int(param.split("L", 1)[1])
-            except (ValueError, IndexError):
-                pass
+    async with client.aio.live.connect(
+        model=config.GEMINI_MODEL, config=live_config
+    ) as session:
+        # Wyślij tekst do syntezy
+        await session.send_client_content(
+            turns=types.Content(
+                role="user",
+                parts=[types.Part(text=text_to_synthesize)],
+            ),
+            turn_complete=True,
+        )
 
-    return {"bits_per_sample": bits_per_sample, "rate": rate_hz}
+        # Odbierz audio z sesji
+        turn = session.receive()
+        async for response in turn:
+            if data := response.data:
+                audio_chunks.append(data)
+            elif text := response.text:
+                log_message(f"[Watus][TTS] Gemini Live text response: {text}")
+
+    if audio_chunks:
+        # Złącz chunki raw PCM (16-bit signed int, mono, 24kHz)
+        raw_pcm = b"".join(audio_chunks)
+        audio_array = np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+
+        sample_rate = config.GEMINI_LIVE_RECEIVE_SAMPLE_RATE
+        sd.play(audio_array, sample_rate, device=audio_output_device_index, blocking=True)
+
+        log_message(f"[Perf] Gemini_Live_TTS_play_ms={int((time.time() - start_time) * 1000)}")
+    else:
+        log_message("[Watus][TTS] No audio data from Gemini Live API")
 
 
 def synthesize_speech_gemini(text_to_synthesize: str, audio_output_device_index):
     """
-    Generuje mowę za pomocą Gemini TTS i odtwarza ją.
+    Generuje mowę za pomocą Gemini Live API i odtwarza ją.
+    Wrapper synchroniczny dla async _synthesize_speech_gemini_live().
     
     Argumenty:
         text_to_synthesize (str): Tekst do syntezy.
@@ -253,7 +260,7 @@ def synthesize_speech_gemini(text_to_synthesize: str, audio_output_device_index)
         return
 
     if not GEMINI_AVAILABLE:
-        log_message("[Watus][TTS] Gemini TTS not available")
+        log_message("[Watus][TTS] Gemini TTS not available - pip install google-genai")
         return
 
     if not config.GEMINI_API_KEY:
@@ -261,74 +268,10 @@ def synthesize_speech_gemini(text_to_synthesize: str, audio_output_device_index)
         return
 
     try:
-        log_message(f"[Watus][TTS] Generating Gemini TTS for: {text_to_synthesize[:50]}...")
-
-        client = genai.Client(api_key=config.GEMINI_API_KEY)
-
-        content_parts = [
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=text_to_synthesize),
-                ],
-            ),
-        ]
-
-        gen_config = types.GenerateContentConfig(
-            temperature=1,
-            response_modalities=["audio"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=config.GEMINI_VOICE
-                    )
-                )
-            ),
-        )
-
-        start_time = time.time()
-
-        synthesized_audio_bytes = b""
-        mime_type_string = ""
-        for response_chunk in client.models.generate_content_stream(
-            model=config.GEMINI_MODEL,
-            contents=content_parts,
-            config=gen_config,
-        ):
-            if (
-                response_chunk.candidates is None
-                or response_chunk.candidates[0].content is None
-                or response_chunk.candidates[0].content.parts is None
-            ):
-                continue
-            if response_chunk.candidates[0].content.parts[0].inline_data and response_chunk.candidates[0].content.parts[0].inline_data.data:
-                inline_data_obj = response_chunk.candidates[0].content.parts[0].inline_data
-                synthesized_audio_bytes = inline_data_obj.data
-                mime_type_string = inline_data_obj.mime_type
-                break
-            else:
-                if hasattr(response_chunk, 'text') and response_chunk.text:
-                    log_message(f"[Watus][TTS] No audio, got text: {response_chunk.text}")
-
-        if synthesized_audio_bytes:
-            if mime_type_string and mime_type_string.startswith("audio/"):
-                wav_data_bytes = _add_wav_header(synthesized_audio_bytes, mime_type_string)
-            else:
-                log_message("[Watus][TTS] Unsupported audio format")
-                return
-
-            import io
-            wav_buffer_io = io.BytesIO(wav_data_bytes)
-            audio_samples_array, sample_rate_hz = sf.read(wav_buffer_io, dtype='float32')
-
-            sd.play(audio_samples_array, sample_rate_hz, device=audio_output_device_index, blocking=True)
-
-            log_message(f"[Perf] Gemini_TTS_play_ms={int((time.time() - start_time) * 1000)}")
-        else:
-            log_message("[Watus][TTS] No audio data generated by Gemini")
-
+        log_message(f"[Watus][TTS] Generating Gemini Live TTS for: {text_to_synthesize[:50]}...")
+        asyncio.run(_synthesize_speech_gemini_live(text_to_synthesize, audio_output_device_index))
     except Exception as e:
-        log_message(f"[Watus][TTS] Gemini TTS error: {e}")
+        log_message(f"[Watus][TTS] Gemini Live TTS error: {e}")
 
 
 LOADED_XTTS_MODEL = None

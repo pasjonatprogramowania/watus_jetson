@@ -26,7 +26,9 @@ from tqdm import tqdm
 import csv
 import ultralytics.data.build as build
 from dotenv import load_dotenv
-load_dotenv()
+# Ładowanie zmiennych środowiskowych z głównego pliku .env projektu
+_PROJECT_ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent.parent / ".env"
+load_dotenv(dotenv_path=_PROJECT_ROOT_ENV, override=True)
 
 from yolo_dataset import YOLOWeightedDataset
 build.YOLODataset = YOLOWeightedDataset

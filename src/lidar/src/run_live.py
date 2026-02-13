@@ -37,7 +37,7 @@ def create_data_session_directory() -> Path:
     """
     this_file = Path(__file__).resolve()
     src_dir = this_file.parent
-    project_root = src_dir.parent
+    project_root = src_dir.parent.parent
 
     base_dir = project_root / "data" / "processed" / "lidar"
     base_dir.mkdir(parents=True, exist_ok=True)

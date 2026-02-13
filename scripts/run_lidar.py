@@ -20,7 +20,7 @@ if sys.platform == "win32":
 else:
     PYTHON_PATH = os.path.join(PROJECT_ROOT, VENV_NAME, "bin", "python")
 
-COMPONENT_DIR = os.path.join(PROJECT_ROOT, "lidar")
+COMPONENT_DIR = os.path.join(PROJECT_ROOT, "src", "lidar")
 
 def main():
     if not os.path.isfile(PYTHON_PATH):

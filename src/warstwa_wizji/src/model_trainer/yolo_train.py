@@ -12,6 +12,7 @@ Hierarchia wywołań:
 from datetime import datetime
 import os
 import shutil
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -23,7 +24,9 @@ import ultralytics.data.build as dataset
 
 from yolo_dataset import YOLOWeightedDataset
 
-load_dotenv()
+# Ładowanie zmiennych środowiskowych z głównego pliku .env projektu
+_PROJECT_ROOT_ENV = Path(__file__).resolve().parent.parent.parent.parent.parent / ".env"
+load_dotenv(dotenv_path=_PROJECT_ROOT_ENV, override=True)
 
 # Opcjonalne użycie eksperymentalnego balancera klas
 if os.environ.get("USE_EXPERIMENTAL_BALANCER", "0") == "1":

@@ -3,9 +3,13 @@ Moduł Pamięci EMMA - Używa biblioteki mem0 do pamięci konwersacyjnej.
 """
 import os
 import logging
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Główny katalog projektu (watus_jetson/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 # Ustaw zmienne środowiskowe dla mem0
 # GOOGLE_API_KEY jest wymagany dla Gemini LLM i embeddera
@@ -57,7 +61,7 @@ def _get_memory():
                 "provider": "qdrant",
                 "config": {
                     "collection_name": "watus_memory",
-                    "path": "./qdrant_mem0_data",  # Pamięć lokalna
+                    "path": str(_PROJECT_ROOT / "data" / "qdrant_mem0_data"),  # Pamięć w katalogu data/
                     "embedding_model_dims": 768,  # Musi pasować do wymiarów embeddera
                 }
             }

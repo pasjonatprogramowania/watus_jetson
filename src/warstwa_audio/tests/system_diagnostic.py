@@ -113,12 +113,13 @@ def check_config():
     """Sprawdź konfigurację"""
     print("\n  KONFIGURACJA:")
     
-    env_file = Path(".env")
+    # Szukanie głównego pliku .env w katalogu projektu
+    env_file = Path(__file__).resolve().parent.parent.parent.parent / ".env"
     if env_file.exists():
-        print(" Plik .env istnieje")
+        print(f" Plik .env istnieje: {env_file}")
         
         from dotenv import load_dotenv
-        load_dotenv(env_file)
+        load_dotenv(env_file, override=True)
         
         # Sprawdź kluczowe zmienne
         critical_vars = [

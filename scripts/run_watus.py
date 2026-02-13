@@ -20,7 +20,7 @@ if sys.platform == "win32":
 else:
     PYTHON_PATH = os.path.join(PROJECT_ROOT, VENV_NAME, "bin", "python")
 
-COMPONENT_DIR = os.path.join(PROJECT_ROOT, "warstwa_audio")
+COMPONENT_DIR = os.path.join(PROJECT_ROOT, "src", "warstwa_audio")
 
 def main():
     if not os.path.isfile(PYTHON_PATH):
