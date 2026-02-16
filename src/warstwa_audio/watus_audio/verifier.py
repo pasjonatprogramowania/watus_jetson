@@ -73,7 +73,7 @@ def create_speaker_verifier():
                 self._speaker_encoder_classifier = EncoderClassifier.from_hparams(
                     source="speechbrain/spkrec-ecapa-voxceleb",
                     run_opts={"device": self._device},
-                    savedir="models/ecapa",
+                    # savedir="models/ecapa", # Usunięto aby używać domyślnego cache i unikać błędów symlinków na Windows
                 )
 
         @staticmethod

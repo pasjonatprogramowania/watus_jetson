@@ -191,6 +191,9 @@ Dostępne rozmiary: `tiny`, `base`, `small`, `medium`, `large`, `large-v3`.
 1. Pobierz model ręcznie z [HuggingFace](https://huggingface.co/Systran):
    * Przykład: [Systran/faster-whisper-medium](https://huggingface.co/Systran/faster-whisper-medium)
 2. Umieść go w katalogu `models/whisper/`:
+
+large:
+https://huggingface.co/Systran/faster-whisper-large-v3
    ```
    models/whisper/faster-whisper-medium/
    ├── config.json

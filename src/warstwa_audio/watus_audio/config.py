@@ -21,9 +21,9 @@ def _env_float(key: str, default: float) -> float:
         return default
     return float(val)
 
-# === Ustawienia Ogólne ===
-# Zapobieganie błędom bibliotek Intel MKL/OpenMP
+# === Ustawienia Ogólne / Intel MKL / HF ===
 KMP_DUPLICATE_LIB_OK = os.environ.get("KMP_DUPLICATE_LIB_OK") or "TRUE"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 OMP_NUM_THREADS = os.environ.get("OMP_NUM_THREADS") or "1"
 MKL_NUM_THREADS = os.environ.get("MKL_NUM_THREADS") or "1"
 CT2_SKIP_CONVERTERS = os.environ.get("CT2_SKIP_CONVERTERS") or "1"
@@ -110,8 +110,9 @@ _whisper_size = os.environ.get("WHISPER_SIZE", "medium").lower()
 _whisper_device_type = os.environ.get("WHISPER_DEVICE_TYPE", "cpu").lower()
 
 # Automatyczne ustalenie ścieżki do modelu
-# Najpierw sprawdzamy lokalny katalog models/faster-whisper-{size}
-_local_model_path = f"models/faster-whisper-{_whisper_size}"
+# Ścieżka absolutna relative do PROJECT_ROOT (nie CWD)
+_PROJECT_ROOT = _PROJECT_ROOT_ENV.parent  # katalog główny projektu
+_local_model_path = str(_PROJECT_ROOT / f"models/faster-whisper-{_whisper_size}")
 if os.path.exists(_local_model_path):
     WHISPER_MODEL_NAME = _local_model_path
 else:
@@ -127,8 +128,17 @@ else:
     WHISPER_COMPUTE = "int8"
 
 # Nadpisanie (opcjonalne) przez stare zmienne, jeśli ktoś ich użył ręcznie w .env
-if os.environ.get("WHISPER_MODEL"):
-    WHISPER_MODEL_NAME = os.environ.get("WHISPER_MODEL")
+_whisper_model_override = os.environ.get("WHISPER_MODEL")
+if _whisper_model_override:
+    # Jeśli to ścieżka lokalna i nie jest absolutna, rozwiąż względem PROJECT_ROOT
+    if "/" in _whisper_model_override or "\\" in _whisper_model_override:
+        _override_path = _PROJECT_ROOT / _whisper_model_override
+        if _override_path.exists():
+            WHISPER_MODEL_NAME = str(_override_path)
+        else:
+            WHISPER_MODEL_NAME = _whisper_model_override  # Może być repo HF
+    else:
+        WHISPER_MODEL_NAME = _whisper_model_override
 if os.environ.get("WHISPER_DEVICE"):
     WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE")
 if os.environ.get("WHISPER_COMPUTE"):
@@ -161,7 +171,7 @@ GAP_TOL_MS = _env_int("WATUS_GAP_TOL_MS", 450)
 IN_DEV_ENV = os.environ.get("WATUS_INPUT_DEVICE")  # ID mikrofonu
 OUT_DEV_ENV = os.environ.get("WATUS_OUTPUT_DEVICE") # ID głośników
 
-DIALOG_PATH = os.environ.get("DIALOG_PATH", "data/watus_audio/dialog.jsonl")
+DIALOG_PATH = str(_PROJECT_ROOT / (os.environ.get("DIALOG_PATH") or "data/watus_audio/dialog.jsonl"))
 
 # === Weryfikacja Mówcy ===
 SPEAKER_VERIFY = _env_int("SPEAKER_VERIFY", 1)
@@ -186,11 +196,11 @@ WAIT_REPLY_S = _env_float("WAIT_REPLY_S", 0.6)
 # === Reporter ===
 LLM_HTTP_URL = (os.environ.get("LLM_HTTP_URL") or "").strip()
 HTTP_TIMEOUT = _env_float("HTTP_TIMEOUT", _env_float("LLM_HTTP_TIMEOUT", 30.0))
-SCENARIOS_DIR = os.environ.get("WATUS_SCENARIOS_DIR", "./scenarios_text")
-SCENARIO_ACTIVE_PATH = os.environ.get("SCENARIO_ACTIVE_PATH", os.path.join(SCENARIOS_DIR, "active.jsonl"))
+SCENARIOS_DIR = str(_PROJECT_ROOT / (os.environ.get("WATUS_SCENARIOS_DIR") or "scenarios_text"))
+SCENARIO_ACTIVE_PATH = str(_PROJECT_ROOT / (os.environ.get("SCENARIO_ACTIVE_PATH") or os.path.join("scenarios_text", "active.jsonl")))
 CAMERA_NAME  = os.environ.get("CAMERA_NAME", "cam_front")
-CAMERA_JSONL = os.environ.get("CAMERA_JSONL", "data/watus_audio/camera.jsonl") # Domyślnie plik lokalny
-LOG_DIR   = os.environ.get("LOG_DIR", "./")
-RESP_FILE = os.path.join(LOG_DIR, "data/watus_audio/responses.jsonl")
-MELD_FILE = os.path.join(LOG_DIR, "data/watus_audio/meldunki.jsonl")
+CAMERA_JSONL = str(_PROJECT_ROOT / (os.environ.get("CAMERA_JSONL") or "data/watus_audio/camera.jsonl"))
+LOG_DIR   = str(_PROJECT_ROOT / (os.environ.get("LOG_DIR") or "./"))
+RESP_FILE = str(Path(LOG_DIR) / "data/watus_audio/responses.jsonl")
+MELD_FILE = str(Path(LOG_DIR) / "data/watus_audio/meldunki.jsonl")
 CAM_WINDOW_SEC = _env_float("CAMERA_WINDOW_SEC", 2.5)
