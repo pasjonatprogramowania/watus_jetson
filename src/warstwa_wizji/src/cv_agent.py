@@ -62,7 +62,8 @@ class CVAgent:
             source: int | str = 0,
             cap=None,
             json_save_func=None,
-            use_net_stream: bool = False
+            use_net_stream: bool = False,
+            export_to_engine: bool = False
         ):
         self.save_to_json = json_save_func
         self.imgsz = imgsz
@@ -117,16 +118,34 @@ class CVAgent:
         self.mil_vehicles_details = {}
         self.clothes_details = {}
 
+        weights_path = self._resolve_engine_model(weights_path, export_to_engine)
         self.detector = YOLO(weights_path)
         self.class_names = self.detector.names
         
         # Inicjalizacja modelu do ubrań
         clothes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/clothes.pt')
         guns_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/weapon.pt')
+        clothes_path = self._resolve_engine_model(clothes_path, export_to_engine)
+        guns_path = self._resolve_engine_model(guns_path, export_to_engine)
         self.clothes_detector = YOLO(clothes_path)  
         self.guns_detector = YOLO(guns_path)
         
         self.window_name = f"YOLOv12 – naciśnij '{ESCAPE_BUTTON}' aby wyjść"
+
+    def _resolve_engine_model(self, pt_path: str, export_to_engine: bool) -> str:
+        if not export_to_engine:
+            return pt_path
+
+        engine_path = os.path.splitext(pt_path)[0] + ".engine"
+        if os.path.isfile(engine_path):
+            print(f"[CVAgent] Znaleziono istniejący plik .engine: {engine_path}")
+            return engine_path
+
+        print(f"[CVAgent] Eksportowanie {pt_path} -> {engine_path} (TensorRT) ...")
+        temp_model = YOLO(pt_path)
+        exported_path = temp_model.export(format="engine", imgsz=self.imgsz)
+        print(f"[CVAgent] Eksport zakończony: {exported_path}")
+        return str(exported_path)
 
     def init_recorder(self, out_path):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")

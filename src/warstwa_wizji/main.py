@@ -180,6 +180,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--width", type=int, default=0, help="Wymuś szerokość (0=bez zmiany)")
     ap.add_argument("--height", type=int, default=0, help="Wymuś wysokość (0=bez zmiany)")
     ap.add_argument("--fps", type=int, default=0, help="Wymuś FPS kamery (0=bez zmiany)")
+    ap.add_argument("--export-engine", action="store_true", default=True,
+                    help="Kompiluj modele .pt do TensorRT .engine podczas uruchamiania")
     return ap.parse_args()
 
 
@@ -205,7 +207,8 @@ def main():
         json_save_func=write_jsonl,
         weights_path="../../models/yolo12n.pt",
         # source="to_detect1.mp4"
-        source=0
+        source=0,
+        export_to_engine=args.export_engine
     )
     agent.run(save_video=False, show_window=True, verbose=False)
 
