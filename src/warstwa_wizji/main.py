@@ -34,9 +34,10 @@ def main():
     """
     agent = CVAgent()
     agent.run(
-        save_video=True, 
+        save_video=False, 
         show_window=True, 
-        consolidate_with_lidar=True
+        consolidate_with_lidar=False,
+        fov_deg=60,
     )
 
 

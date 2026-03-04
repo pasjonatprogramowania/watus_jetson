@@ -25,8 +25,8 @@ from transformers import (
     ViTForImageClassification
 )
 
-from src.img_classifiers import findDominantColor
-from src.img_classifiers.utils import retrieve_img
+from .color_classifier import findDominantColor
+from .utils import retrieve_img
 
 
 class ImageClassifier:

@@ -11,4 +11,3 @@ Hierarchia wywołań:
 """
 
 from .src import *
-from .main import *
