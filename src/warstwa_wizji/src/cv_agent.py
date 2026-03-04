@@ -62,7 +62,7 @@ class CVAgent:
             source: int | str = 0,
             cap=None,
             json_save_func=None,
-            use_net_stream: bool = True
+            use_net_stream: bool = False
         ):
         self.save_to_json = json_save_func
         self.imgsz = imgsz
@@ -121,8 +121,8 @@ class CVAgent:
         self.class_names = self.detector.names
         
         # Inicjalizacja modelu do ubrań
-        clothes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models/clothes.pt')
-        guns_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models/guns.pt')
+        clothes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/clothes.pt')
+        guns_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../models/weapon.pt')
         self.clothes_detector = YOLO(clothes_path)  
         self.guns_detector = YOLO(guns_path)
         

@@ -135,3 +135,4 @@ lidar/.venv*
 warstwa_audio/.venv*
 warstwa_llm/.venv*
 warstwa_wizji/models/
+datasets/
