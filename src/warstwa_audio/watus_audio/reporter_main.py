@@ -1,14 +1,72 @@
 import time
 import json
 import threading
+from collections import deque
 import zmq
 import uvicorn
 from fastapi import FastAPI
-from typing import Set, Dict, Any
+from typing import Set, Dict, Any, List, Tuple
 from . import config
 from .common import log_message, write_object_to_jsonl_file
 from .reporter_camera import start_camera_tail_loop, get_current_camera_summary, _camera_last_state
 from .reporter_llm import send_query_to_llm, parse_retry_hint_from_error
+
+
+# ===== Pamięć konwersacji =====
+class ConversationMemory:
+    """
+    Krótkoterminowa pamięć konwersacji per speaker.
+    Przechowuje ostatnie N par (pytanie, odpowiedź) z automatycznym TTL.
+    """
+
+    def __init__(self, max_turns: int = None, ttl_seconds: float = None):
+        self._max_turns = max_turns or config.CONV_MEMORY_SIZE
+        self._ttl = ttl_seconds or config.CONV_MEMORY_TTL_S
+        self._lock = threading.Lock()
+        # speaker_id -> {"history": deque of (question, answer), "last_ts": float}
+        self._speakers: Dict[str, Dict] = {}
+
+    def _cleanup_expired(self):
+        """Usuwa wpisy starsze niż TTL."""
+        now = time.time()
+        expired = [sid for sid, data in self._speakers.items() if (now - data["last_ts"]) > self._ttl]
+        for sid in expired:
+            del self._speakers[sid]
+
+    def add_turn(self, speaker_id: str, question: str, answer: str):
+        """Dodaje parę pytanie-odpowiedź do historii danego mówcy."""
+        with self._lock:
+            self._cleanup_expired()
+            if speaker_id not in self._speakers:
+                self._speakers[speaker_id] = {"history": deque(maxlen=self._max_turns), "last_ts": 0.0}
+            self._speakers[speaker_id]["history"].append((question, answer))
+            self._speakers[speaker_id]["last_ts"] = time.time()
+
+    def get_history(self, speaker_id: str) -> List[Tuple[str, str]]:
+        """Zwraca historię konwersacji dla danego mówcy."""
+        with self._lock:
+            self._cleanup_expired()
+            data = self._speakers.get(speaker_id)
+            if not data:
+                return []
+            return list(data["history"])
+
+    def format_history_for_llm(self, speaker_id: str) -> str:
+        """Formatuje historię konwersacji do dołączenia do zapytania LLM."""
+        history = self.get_history(speaker_id)
+        if not history:
+            return ""
+        parts = ["[HISTORIA KONWERSACJI z tym użytkownikiem (najnowsze na końcu):"]
+        for i, (q, a) in enumerate(history, 1):
+            # Skróć odpowiedź do 150 znaków żeby nie przekroczyć limitu
+            a_short = a[:150] + "..." if len(a) > 150 else a
+            parts.append(f"  Q{i}: {q}")
+            parts.append(f"  A{i}: {a_short}")
+        parts.append("]")
+        return " ".join(parts)
+
+
+conv_memory = ConversationMemory()
 
 # ===== ZMQ =====
 zmq_context = zmq.Context.instance()
@@ -189,6 +247,7 @@ def build_report_payload(received_message_payload: Dict[str, Any]) -> Dict[str, 
     question_text = (received_message_payload.get("text_full") or "").strip()
     session_id = received_message_payload.get("session_id")
     group_id   = received_message_payload.get("group_id")
+    speaker_id = received_message_payload.get("speaker_id") or "unknown"
     ts_start   = float(received_message_payload.get("ts_start") or 0.0)
     ts_end     = float(received_message_payload.get("ts_end") or 0.0)
     dbfs       = received_message_payload.get("dbfs")
@@ -210,12 +269,16 @@ def build_report_payload(received_message_payload: Dict[str, Any]) -> Dict[str, 
     else:
         camera_window_string = "WIN=none"
 
+    # Pamięć konwersacji — dołączenie historii poprzednich Q&A
+    conv_history_string = conv_memory.format_history_for_llm(speaker_id)
+
     description_string = (
         f"[SYS_TIME={current_time:.3f}] [SCENARIO={scenario_id}] [CAMERA={config.CAMERA_NAME}] "
-        f"[SESSION={session_id}] [GROUP={group_id}] "
+        f"[SESSION={session_id}] [GROUP={group_id}] [SPEAKER={speaker_id}] "
         f"[SPEECH={ts_start:.3f}-{ts_end:.3f}s ~{dbfs:.1f}dBFS] "
         f"[LEADER_SCORE={verify_data.get('score')}] "
         f"[VISION {camera_last_string} | {camera_window_string}] "
+        f"{conv_history_string} "
         f"USER: {question_text}"
     )
 
@@ -225,10 +288,12 @@ def build_report_payload(received_message_payload: Dict[str, Any]) -> Dict[str, 
         "scenario": scenario_id,
         "camera": {"name": config.CAMERA_NAME, "jsonl_path": config.CAMERA_JSONL or None},
         "question_text": question_text,
+        "speaker_id": speaker_id,
         "opis": description_string,
         "dialog_meta": {
             "session_id": session_id,
             "group_id": group_id,
+            "speaker_id": speaker_id,
             "turn_ids": received_message_payload.get("turn_ids"),
             "ts_start": ts_start,
             "ts_end": ts_end,
@@ -302,6 +367,8 @@ def start_main_loop():
             write_object_to_jsonl_file(config.MELD_FILE, report_payload_object)
 
             content_text = report_payload_object["opis"]  # tylko string – kompatybilność i szybkość
+            question_text = report_payload_object.get("question_text", "")
+            speaker_id = report_payload_object.get("speaker_id", "unknown")
 
             # 1. próba
             llm_answer_text, status_code, error_text, latency_ms = send_query_to_llm(content_text)
@@ -328,6 +395,11 @@ def start_main_loop():
                     {"text": msg_text, "reply_to": group_id, "turn_ids": dialog_turn_identifiers},
                     ensure_ascii=False).encode("utf-8")])
                 continue
+
+            # Zapisz parę Q&A do pamięci konwersacji
+            if question_text and speaker_id != "unknown":
+                conv_memory.add_turn(speaker_id, question_text, llm_answer_text)
+                log_message(f"[Reporter][MEM] Saved Q&A for speaker={speaker_id} (history_len={len(conv_memory.get_history(speaker_id))})")
 
             log_message(f"[Reporter][LLM] answer len={len(llm_answer_text)}")
             publisher_socket.send_multipart([b"tts.speak", json.dumps(

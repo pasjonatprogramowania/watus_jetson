@@ -1,5 +1,5 @@
 """
-Skrypt startowy: Tworzenie / aktualizacja bazy wektorowej ChromaDB.
+Skrypt startowy: Tworzenie / aktualizacja bazy wektorowej mem0 (Qdrant).
 Przetwarza pliki JSONL z folderu data/ i dodaje je do bazy wektorowej.
 """
 import os
@@ -35,28 +35,26 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.getcwd())
 
 from src.logic.vectordb import initialize_vector_db, batch_process, add_to_vector_db
-from src.config import DATA_FOLDER, CHROMADB_PATH
+from src.config import DATA_FOLDER
 
 print("=" * 60)
-print("  TWORZENIE BAZY WEKTOROWEJ ChromaDB")
+print("  TWORZENIE BAZY WEKTOROWEJ MEm0 (Qdrant)")
 print("=" * 60)
 print()
 print(f"[INFO] Folder danych:   {DATA_FOLDER}")
-print(f"[INFO] Ścieżka ChromaDB: {CHROMADB_PATH}")
 print()
 
 # 1. Inicjalizacja bazy
-print("[1/3] Inicjalizacja bazy wektorowej...")
-client, collection = initialize_vector_db()
-if not collection:
+print("[1/3] Inicjalizacja bazy wektorowej mem0...")
+client, memory = initialize_vector_db()
+if not memory:
     print("[BŁĄD] Nie udało się zainicjalizować bazy wektorowej!")
     sys.exit(1)
-print(f"[OK]  Baza zainicjalizowana. Kolekcja: {collection.name}")
-print(f"      Istniejące dokumenty: {collection.count()}")
+print(f"[OK]  Baza zainicjalizowana.")
 print()
 
 # 2. Przetwarzanie plików
-print(f"[2/3] Przetwarzanie plików JSONL z: {DATA_FOLDER}")
+print(f"[2/3] Przetwarzanie plików m.in JSONL z: {DATA_FOLDER}")
 results = batch_process(DATA_FOLDER)
 if not results:
     print("[INFO] Brak nowych danych do przetworzenia.")
@@ -67,8 +65,8 @@ print()
 
 # 3. Dodawanie do bazy
 print(f"[3/3] Dodawanie {len(results)} dokumentów do bazy wektorowej...")
-add_to_vector_db(collection, results)
-print(f"[OK]  Baza wektorowa zaktualizowana. Łącznie dokumentów: {collection.count()}")
+add_to_vector_db(memory, results)
+print(f"[OK]  Baza wektorowa zaktualizowana.")
 print()
 print("=" * 60)
 print("  GOTOWE!")

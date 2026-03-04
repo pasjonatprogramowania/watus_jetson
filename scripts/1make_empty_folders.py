@@ -18,7 +18,8 @@ FOLDERS = [
 
     # Dane
     os.path.join(PROJECT_ROOT, "data", "watus_audio"),
-
+    os.path.join(PROJECT_ROOT, "data", "warstwa_llm"),
+    os.path.join(PROJECT_ROOT, "data", "qdrant_knowledge_data"),
 ]
 
 # === Puste pliki do utworzenia (jeśli nie istnieją) ===

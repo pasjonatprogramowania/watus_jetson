@@ -90,6 +90,20 @@ def vector_search(query: str) -> VectorSearchResult:
         )
 
 
+def _extract_speaker_id(content: str) -> str:
+    """
+    Wyciąga speaker_id z opisu zapytania (tag [SPEAKER=...]).
+    Fallback do 'default_user' jeśli tag nie istnieje.
+    """
+    import re
+    match = re.search(r'\[SPEAKER=(\S+?)\]', content)
+    if match:
+        spk = match.group(1)
+        if spk and spk != "unknown":
+            return spk
+    return "default_user"
+
+
 def process_question(content: str) -> Answer:
     """
     Główna funkcja przetwarzająca pytanie użytkownika.
@@ -137,8 +151,8 @@ def process_question(content: str) -> Answer:
             except Exception as e:
                 logger.warning(f"Vector search failed (non-critical): {e}")
 
-        # --- EMMA Integration ---
-        user_id = "default_user"
+        # --- EMMA Integration (z powiązaniem speaker_id) ---
+        user_id = _extract_speaker_id(content)
         try:
             memory_context = retrieve_relevant_memories(user_id, content)
             if memory_context:

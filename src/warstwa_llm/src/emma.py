@@ -17,6 +17,9 @@ GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY
 if GOOGLE_API_KEY:
     os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
+# Wyłącz telemetrię mem0, żeby zapobiec błędom blokady plików Qdrant na Windowsie
+os.environ["MEM0_TELEMETRY"] = "false"
+
 # Zainicjalizuj pamięć mem0 z konfiguracją Gemini
 _memory_instance = None
 
@@ -53,8 +56,8 @@ def _get_memory():
             "embedder": {
                 "provider": "gemini",
                 "config": {
-                    "model": "models/text-embedding-004",
-                    "embedding_dims": 768,  # Model Gemini text-embedding-004 używa 768 wymiarów
+                    "model": "models/embedding-001",
+                    "embedding_dims": 768,  # Model Gemini embedding-001 używa 768 wymiarów
                 }
             },
             "vector_store": {
@@ -68,7 +71,23 @@ def _get_memory():
         }
         
         try:
-            _memory_instance = Memory.from_config(config)
+            # Obejście problemu Qdrant lock (WinError 32) przez telemetrię mem0
+            import mem0.memory.main
+            original_create = mem0.memory.main.VectorStoreFactory.create
+            class MockTelemetryDB:
+                def insert(self, *a, **k): pass
+                def search(self, *a, **k): return []
+                def update(self, *a, **k): pass
+                def get(self, *a, **k): return None
+                def list(self, *a, **k): return []
+                def delete(self, *a, **k): pass
+            def patched_create(provider, cfg):
+                if getattr(cfg, 'collection_name', None) == 'mem0migrations':
+                    return MockTelemetryDB()
+                return original_create(provider, cfg)
+            mem0.memory.main.VectorStoreFactory.create = patched_create
+
+            _memory_instance = mem0.memory.main.Memory.from_config(config)
             logger.info("mem0 Memory initialized successfully with Gemini.")
             print("DEBUG: mem0 Memory initialized successfully with Gemini.")
         except Exception as e:

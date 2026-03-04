@@ -330,6 +330,10 @@ class SpeechToTextProcessingEngine:
                 verification_result = self.speaker_verifier.verify_speaker_identity(audio_samples_float32, config.SAMPLE_RATE, audio_volume_dbfs)
                 is_leader_detected = bool(verification_result.get("is_leader", False))
                 log_message(f"[DEBUG] Verification result: {verification_result}")
+                # Adaptacyjne uczenie — po udanej weryfikacji dodajemy embedding do historii
+                if is_leader_detected:
+                    score = verification_result.get("score", 0.0)
+                    self.speaker_verifier.adaptive_update(audio_samples_float32, config.SAMPLE_RATE, score)
             else:
                 log_message(f"[Watus][SPK] Brak lidera i słowa-klucz. Ignoruję: '{transcribed_text}'")
                 return
@@ -337,7 +341,14 @@ class SpeechToTextProcessingEngine:
             # Jeśli weryfikacja jest wyłączona, każda wypowiedź jest od "lidera"
             is_leader_detected = not config.SPEAKER_REQUIRE_MATCH
 
-        # 3. Przygotowanie i wysłanie danych
+        # 3. Generowanie stabilnego speaker_hash z pierwszego w historii embeddingu
+        speaker_hash = "unknown"
+        if is_leader_detected and hasattr(self.speaker_verifier, '_base_embedding') and self.speaker_verifier._base_embedding is not None:
+            import hashlib
+            emb_bytes = self.speaker_verifier._base_embedding.tobytes()
+            speaker_hash = "spk_" + hashlib.md5(emb_bytes).hexdigest()[:12]
+
+        # 4. Przygotowanie i wysłanie danych
         ts_start = (speech_start_timestamp_ms or last_voice_activity_timestamp_ms) / 1000.0
         ts_end = last_voice_activity_timestamp_ms / 1000.0
         turn_id = int(last_voice_activity_timestamp_ms)
@@ -346,7 +357,7 @@ class SpeechToTextProcessingEngine:
             "type": "leader_utterance" if is_leader_detected else "unknown_utterance",
             "session_id": self.state.session_id,
             "group_id": f"{'leader' if is_leader_detected else 'unknown'}_{turn_id}",
-            "speaker_id": "leader" if is_leader_detected else "unknown",
+            "speaker_id": speaker_hash if is_leader_detected else "unknown",
             "is_leader": is_leader_detected,
             "turn_ids": [turn_id],
             "text_full": transcribed_text,
@@ -362,10 +373,11 @@ class SpeechToTextProcessingEngine:
         append_line_to_dialog_history(dialog_line_object, config.DIALOG_PATH)
 
         if is_leader_detected:
-            log_message(f"[Watus][PUB] dialog.leader → group={dialog_line_object['group_id']} spk_score={verification_result.get('score')}")
+            log_message(f"[Watus][PUB] dialog.leader → group={dialog_line_object['group_id']} spk_score={verification_result.get('score')} spk_id={speaker_hash}")
             self.state.set_awaiting_reply_flag(True)
             self.bus.publish_leader_utterance(dialog_line_object)
             self.state.block_input_until_reply_received()
             self.state.tts_pending_until_timestamp = time.time() + 0.6
         else:
             log_message(f"[Watus][SKIP] unknown (score={verification_result.get('score', 0):.2f}) zapisany, nie wysyłam ZMQ")
+

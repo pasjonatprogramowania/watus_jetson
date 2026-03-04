@@ -3,31 +3,114 @@ import re
 import json
 import time
 import uuid
-import uuid
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-import chromadb
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
-
 from ..config import (
-    CHROMADB_PATH, DATA_FOLDER, DOCUMENT_METADATA_SYSTEM_PROMPT,
+    MEM0_KNOWLEDGE_PATH, DATA_FOLDER, DOCUMENT_METADATA_SYSTEM_PROMPT,
     TOPIC, KEYWORDS, MENTIONED_NAMES, CATEGORIES,
-    DOCUMENTS, METADATAS, DISTANCES
+    DOCUMENTS, METADATAS, DISTANCES, KNOWLEDGE_COLLECTION_NAME
 )
 from ..types import DocumentMetadata, ProcessingResult
 from .llm import run_agent_with_logging
 
 logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "knowledge_base"
 SUPPORTED_EXTENSIONS = [".jsonl"]
 
 # Opóźnienie między zapytaniami API (sekundy).
 # Darmowy tier Gemini: 10 req/min → min. 6s między zapytaniami.
 API_REQUEST_DELAY = 7.0
 MAX_RETRIES = 5
+
+# ──────────────────────────────────────────────
+# Singleton instancji mem0 Memory (baza wiedzy)
+# ──────────────────────────────────────────────
+_knowledge_memory_instance = None
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+
+
+def _get_knowledge_memory():
+    """
+    Leniwa inicjalizacja instancji pamięci mem0 dla bazy wiedzy (RAG).
+
+    Używa kolekcji Qdrant 'watus_knowledge' (oddzielnej od EMMA 'watus_memory').
+    Konfiguracja: Gemini LLM + Gemini Embedder + Qdrant vector store.
+
+    Zwraca:
+        Memory: Zainicjalizowana instancja mem0 Memory.
+
+    Hierarchia wywołań:
+        logic/vectordb.py -> initialize_vector_db() -> _get_knowledge_memory()
+        logic/vectordb.py -> return_collection() -> _get_knowledge_memory()
+    """
+    global _knowledge_memory_instance
+    if _knowledge_memory_instance is None:
+        from mem0 import Memory
+
+        # Upewnij się, że GOOGLE_API_KEY jest ustawiony (wymagany przez Gemini provider)
+        google_api_key = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY", ""))
+        if google_api_key:
+            os.environ["GOOGLE_API_KEY"] = google_api_key
+
+        # Wyłącz telemetrię mem0, żeby zapobiec błędom blokady plików Qdrant na Windowsie
+        os.environ["MEM0_TELEMETRY"] = "false"
+
+        knowledge_path = str(_PROJECT_ROOT / MEM0_KNOWLEDGE_PATH)
+        os.makedirs(knowledge_path, exist_ok=True)
+
+        config = {
+            "llm": {
+                "provider": "gemini",
+                "config": {
+                    "model": "gemini-2.0-flash-lite",
+                    "temperature": 0.2,
+                    "max_tokens": 2000,
+                }
+            },
+            "embedder": {
+                "provider": "gemini",
+                "config": {
+                    "model": "models/embedding-001",
+                    "embedding_dims": 768,
+                }
+            },
+            "vector_store": {
+                "provider": "qdrant",
+                "config": {
+                    "collection_name": KNOWLEDGE_COLLECTION_NAME,
+                    "path": knowledge_path,
+                    "embedding_model_dims": 768,
+                }
+            }
+        }
+
+        try:
+            # Obejście problemu Qdrant lock (WinError 32) przez telemetrię mem0
+            import mem0.memory.main
+            original_create = mem0.memory.main.VectorStoreFactory.create
+            class MockTelemetryDB:
+                def insert(self, *a, **k): pass
+                def search(self, *a, **k): return []
+                def update(self, *a, **k): pass
+                def get(self, *a, **k): return None
+                def list(self, *a, **k): return []
+                def delete(self, *a, **k): pass
+            def patched_create(provider, cfg):
+                if getattr(cfg, 'collection_name', None) == 'mem0migrations':
+                    return MockTelemetryDB()
+                return original_create(provider, cfg)
+            mem0.memory.main.VectorStoreFactory.create = patched_create
+
+            _knowledge_memory_instance = mem0.memory.main.Memory.from_config(config)
+            logger.info(f"mem0 Knowledge Memory zainicjalizowana (kolekcja: {KNOWLEDGE_COLLECTION_NAME}).")
+        except Exception as e:
+            logger.error(f"Błąd inicjalizacji mem0 Knowledge Memory: {e}")
+            raise
+
+    return _knowledge_memory_instance
 
 
 def generate_metadata(conversation_content: str) -> DocumentMetadata:
@@ -53,8 +136,7 @@ def generate_metadata(conversation_content: str) -> DocumentMetadata:
         except Exception as e:
             error_str = str(e)
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                # Spróbuj wyciągnąć czas oczekiwania z odpowiedzi API
-                retry_match = re.search(r'retry\s*(?:in|Delay["\s:]*)\s*["\']?(\d+)', error_str, re.IGNORECASE)
+                retry_match = re.search(r'retry\s*(?:in|Delay["\s:]*)\s*["\'"]?(\d+)', error_str, re.IGNORECASE)
                 wait_time = int(retry_match.group(1)) + 5 if retry_match else 30 * attempt
                 logger.warning(
                     f"Rate limit (429) — próba {attempt}/{MAX_RETRIES}. "
@@ -164,137 +246,146 @@ def batch_process(folder: str = DATA_FOLDER):
 
 def initialize_vector_db():
     """
-    Inicjalizuje klienta ChromaDB i kolekcję.
+    Inicjalizuje instancję mem0 Memory dla bazy wiedzy.
 
-    Tworzy trwałą instancję klienta ChromaDB w ścieżce `CHROMADB_PATH`
-    i pobiera lub tworzy kolekcję o nazwie `COLLECTION_NAME`.
+    Zwraca krotkę (None, memory) dla kompatybilności wstecznej
+    z poprzednim API ChromaDB (client, collection).
 
     Zwraca:
-        tuple: Para (client, collection) lub (None, None) w przypadku błędu.
+        tuple: Para (None, Memory) lub (None, None) w przypadku błędu.
 
     Hierarchia wywołań:
-        src.logic.vectordb.py -> initialize_vector_db() -> chromadb.PersistentClient()
+        src.logic.vectordb.py -> initialize_vector_db() -> _get_knowledge_memory()
     """
     try:
-        if not Path(CHROMADB_PATH).exists():
-            os.makedirs(CHROMADB_PATH, exist_ok=True)
-            client = chromadb.PersistentClient(path=CHROMADB_PATH)
-            collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                embedding_function=DefaultEmbeddingFunction()
-            )
-            logger.info(f"Baza wektorowa zainicjalizowana w: {CHROMADB_PATH}")
-            return client, collection
-        
-        # Jeśli istnieje, wciąż zwróć klienta/kolekcję
-        client = chromadb.PersistentClient(path=CHROMADB_PATH)
-        collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                embedding_function=DefaultEmbeddingFunction()
-        )
-        return client, collection
-
+        memory = _get_knowledge_memory()
+        logger.info("Baza wiedzy (mem0) zainicjalizowana.")
+        return None, memory
     except Exception as e:
-        logger.error(f"Błąd inicjalizacji bazy wektorowej: {str(e)}")
+        logger.error(f"Błąd inicjalizacji bazy wiedzy (mem0): {str(e)}")
         return None, None
 
 
-def add_to_vector_db(collection, results):
+def add_to_vector_db(memory, results):
     """
-    Dodaje przetworzone rozmowy do bazy wektorowej.
+    Dodaje przetworzone rozmowy do bazy wiedzy mem0.
 
-    Przygotowuje dokumenty, metadane i ID z obiektów `ProcessingResult`
-    i wstawia je do podanej kolekcji ChromaDB.
+    Iteruje po obiektach ProcessingResult i dodaje każdy dokument
+    do instancji mem0 Memory z odpowiednimi metadanymi.
 
     Argumenty:
-        collection: Obiekt kolekcji ChromaDB.
+        memory: Instancja mem0 Memory.
         results (list): Lista obiektów `ProcessingResult` do dodania.
 
     Hierarchia wywołań:
-        src.logic.vectordb.py -> add_to_vector_db() -> chromadb.Collection.add()
+        src.logic.vectordb.py -> add_to_vector_db() -> mem0.Memory.add()
     """
-    if not collection:
-        logger.error("Brak dostępnej kolekcji bazy wektorowej")
+    if not memory:
+        logger.error("Brak dostępnej instancji mem0 Memory")
         return
 
-    documents = []
-    metadatas = []
-    ids = []
-
+    added_count = 0
     for result in results:
         doc_text = json.dumps(result.document_content, ensure_ascii=False)
-        documents.append(doc_text)
+
         metadata = {
             TOPIC: result.metadata.main_topic,
             KEYWORDS: ", ".join(result.metadata.keywords[:20]),
             CATEGORIES: ", ".join(result.metadata.categories[:5]),
             MENTIONED_NAMES: ", ".join(result.metadata.mentioned_names)
         }
-        metadatas.append(metadata)
-        ids.append(result.processing_id)
 
-    try:
-        if documents:
-            collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
+        try:
+            memory.add(
+                doc_text,
+                user_id="knowledge_base",
+                metadata=metadata,
             )
-            logger.info(f"Dodano {len(documents)} rozmów do bazy wektorowej")
-    except Exception as e:
-        logger.error(f"Błąd dodawania do bazy wektorowej: {e}")
+            added_count += 1
+        except Exception as e:
+            logger.error(f"Błąd dodawania dokumentu do mem0: {e}")
+
+    logger.info(f"Dodano {added_count}/{len(results)} dokumentów do bazy wiedzy (mem0)")
 
 
-def return_collection(collection_name: str = COLLECTION_NAME):
+def return_collection(collection_name: str = None):
     """
-    Zwraca instancję kolekcji ChromaDB.
+    Zwraca instancję mem0 Memory (baza wiedzy).
 
-    Tworzy klienta (jeśli trzeba) i pobiera kolekcję. Przydatne do operacji tylko do odczytu.
+    Zastępuje poprzednią wersję zwracającą kolekcję ChromaDB.
+    Parametr `collection_name` zachowany dla kompatybilności wstecznej, ale ignorowany
+    (nazwa kolekcji jest ustawiona w konfiguracji mem0).
 
     Argumenty:
-        collection_name (str): Nazwa kolekcji. Domyślnie `COLLECTION_NAME`.
+        collection_name (str): Ignorowany (zachowany dla kompatybilności).
 
     Zwraca:
-        Collection: Obiekt kolekcji ChromaDB.
+        Memory: Instancja mem0 Memory.
 
     Hierarchia wywołań:
-        src.logic.vectordb.py -> return_collection() -> chromadb.PersistentClient()
+        src.logic.vectordb.py -> return_collection() -> _get_knowledge_memory()
     """
-    client = chromadb.PersistentClient(path=CHROMADB_PATH)
-    return client.get_collection(
-        name=collection_name,
-        embedding_function=DefaultEmbeddingFunction()
-    )
+    return _get_knowledge_memory()
 
 
-def search_vector_db(collection, query: str, n_results: int = 3):
+def search_vector_db(memory, query: str, n_results: int = 3):
     """
-    Przeszukuje bazę wektorową w poszukiwaniu podobnych rozmów.
+    Przeszukuje bazę wiedzy mem0 w poszukiwaniu podobnych dokumentów.
 
-    Wykonuje zapytanie semantyczne do ChromaDB.
+    Wykonuje zapytanie semantyczne via mem0.search() i mapuje wyniki
+    na format kompatybilny z poprzednim API ChromaDB.
 
     Argumenty:
-        collection: Obiekt kolekcji ChromaDB.
+        memory: Instancja mem0 Memory.
         query (str): Tekst zapytania.
         n_results (int): Liczba wyników do zwrócenia. Domyślnie 3.
 
     Zwraca:
-        dict: Wyniki zapytania (dokumenty, metadane, odległości) lub None w przypadku błędu.
+        dict: Wyniki zapytania w formacie ChromaDB-kompatybilnym:
+              {documents: [[str, ...]], metadatas: [[dict, ...]], distances: [[float, ...]]}
+              lub None w przypadku błędu.
 
     Hierarchia wywołań:
-        src.logic.vectordb.py -> search_vector_db() -> chromadb.Collection.query()
+        src.logic.vectordb.py -> search_vector_db() -> mem0.Memory.search()
     """
-    if not collection:
-        logger.error("Brak dostępnej kolekcji bazy wektorowej")
+    if not memory:
+        logger.error("Brak dostępnej instancji mem0 Memory")
         return None
 
     try:
-        results = collection.query(
-            query_texts=[query],
-            n_results=n_results
+        raw_results = memory.search(
+            query,
+            user_id="knowledge_base",
+            limit=n_results
         )
-        logger.info(f"Wykonano wyszukiwanie wektorowe dla zapytania: {query}")
-        return results
+        logger.info(f"Wykonano wyszukiwanie w bazie wiedzy (mem0) dla zapytania: {query}")
+
+        # Mapowanie wyników mem0 na format kompatybilny z ChromaDB
+        documents = []
+        metadatas = []
+        distances = []
+
+        memories = raw_results.get("results", [])
+        for mem in memories:
+            memory_text = mem.get("memory", "")
+            documents.append(memory_text)
+
+            # Odtworzenie metadanych z formatu mem0
+            meta = mem.get("metadata", {}) or {}
+            metadatas.append(meta)
+
+            # mem0 zwraca score (wyższy = lepszy), ChromaDB zwracał distance (niższy = lepszy)
+            # Mapujemy score → distance: distance = 1 - score
+            score = mem.get("score", 0.0)
+            distances.append(round(1.0 - score, 4))
+
+        # Format ChromaDB: listy owinięte w dodatkową listę (batch query support)
+        return {
+            DOCUMENTS: [documents],
+            METADATAS: [metadatas],
+            DISTANCES: [distances]
+        }
+
     except Exception as e:
-        logger.error(f"Błąd przeszukiwania bazy wektorowej: {e}")
+        logger.error(f"Błąd przeszukiwania bazy wiedzy (mem0): {e}")
         return None

@@ -1,5 +1,6 @@
 import time
 import numpy as np
+from collections import deque
 from .common import log_message
 from . import config
 
@@ -15,6 +16,8 @@ class _NoopVerifier:
     def enrolled(self): return False
 
     def enroll_voice_samples(self, audio_samples, sample_rate_hz): pass
+
+    def adaptive_update(self, audio_samples, sample_rate_hz, score): pass
 
     def verify_speaker_identity(self, audio_samples, sample_rate_hz, audio_volume_dbfs): return {"enabled": False}
 
@@ -41,6 +44,7 @@ def create_speaker_verifier():
     class _SbVerifier:
         """
         Weryfikator mówcy oparty na SpeechBrain (ECAPA-TDNN).
+        Uśrednia embeddingi z wielu próbek głosu dla stabilniejszej weryfikacji.
         """
         enabled = True
 
@@ -53,13 +57,16 @@ def create_speaker_verifier():
             self.sticky_seconds = config.SPEAKER_STICKY_SEC
             self._speaker_encoder_classifier = None
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self._enrolled_embedding_vector = None
+            # Historia embeddingów do uśredniania
+            self._embedding_history = deque(maxlen=config.SPEAKER_EMBEDDING_HISTORY_SIZE)
+            self._mean_embedding = None
+            self._base_embedding = None  # Używany do generowania stabilnego hash ID
             self._enroll_timestamp = 0.0
 
         @property
         def enrolled(self):
             """Czy wzorzec głosu lidera jest zarejestrowany?"""
-            return self._enrolled_embedding_vector is not None
+            return self._mean_embedding is not None
 
         def _ensure_model_loaded(self):
             """
@@ -73,7 +80,6 @@ def create_speaker_verifier():
                 self._speaker_encoder_classifier = EncoderClassifier.from_hparams(
                     source="speechbrain/spkrec-ecapa-voxceleb",
                     run_opts={"device": self._device},
-                    # savedir="models/ecapa", # Usunięto aby używać domyślnego cache i unikać błędów symlinków na Windows
                 )
 
         @staticmethod
@@ -121,9 +127,21 @@ def create_speaker_verifier():
                 embedding_vector = self._speaker_encoder_classifier.encode_batch(tensor_input).squeeze(0).squeeze(0)
             return embedding_vector.detach().cpu().numpy().astype(np.float32)
 
+        def _update_mean_embedding(self):
+            """
+            Przelicza średni embedding z historii próbek.
+            Uśrednianie stabilizuje wektor referencyjny i zwiększa dokładność weryfikacji.
+            """
+            if not self._embedding_history:
+                self._mean_embedding = None
+                return
+            stacked = np.stack(list(self._embedding_history), axis=0)
+            self._mean_embedding = np.mean(stacked, axis=0).astype(np.float32)
+
         def enroll_voice_samples(self, audio_samples: np.ndarray, sample_rate_hz: int):
             """
             Rejestruje próbki głosu jako wzorzec lidera.
+            Dodaje embedding do historii i przelicza średnią.
             
             Argumenty:
                 audio_samples (np.ndarray): Próbki audio (float32).
@@ -131,18 +149,49 @@ def create_speaker_verifier():
                 
             Hierarchia wywołań:
                 watus_main.py -> main() -> enroll_voice_samples() (via command "enroll")
+                stt.py -> _process_recorded_speech_segment() -> enroll_voice_samples()
             """
             try:
                 embedding_vector = self._compute_embedding(audio_samples, sample_rate_hz)
-                self._enrolled_embedding_vector = embedding_vector
+                if self._base_embedding is None:
+                    self._base_embedding = embedding_vector
+                self._embedding_history.append(embedding_vector)
+                self._update_mean_embedding()
                 self._enroll_timestamp = time.time()
-                log_message(f"[Watus][SPK] Enrolled new leader voice.")
+                log_message(f"[Watus][SPK] Enrolled new leader voice. (history={len(self._embedding_history)})")
             except Exception as e:
                 log_message(f"[Watus][SPK] enroll err: {e}")
+
+        def adaptive_update(self, audio_samples: np.ndarray, sample_rate_hz: int, score: float):
+            """
+            Adaptacyjne uczenie — po udanej weryfikacji dodaje embedding do historii,
+            żeby profil głosu stawał się coraz dokładniejszy.
+            
+            Argumenty:
+                audio_samples (np.ndarray): Próbki audio.
+                sample_rate_hz (int): Częstotliwość próbkowania.
+                score (float): Score z ostatniej weryfikacji.
+                
+            Hierarchia wywołań:
+                stt.py -> _process_recorded_speech_segment() -> adaptive_update()
+            """
+            if not config.SPEAKER_ADAPTIVE_LEARN:
+                return
+            if score < config.SPEAKER_ADAPTIVE_MIN_SCORE:
+                return
+            try:
+                embedding_vector = self._compute_embedding(audio_samples, sample_rate_hz)
+                self._embedding_history.append(embedding_vector)
+                self._update_mean_embedding()
+                self._enroll_timestamp = time.time()
+                log_message(f"[Watus][SPK] Adaptive update (score={score:.3f}, history={len(self._embedding_history)})")
+            except Exception as e:
+                log_message(f"[Watus][SPK] adaptive err: {e}")
 
         def verify_speaker_identity(self, audio_samples: np.ndarray, sample_rate_hz: int, audio_volume_dbfs: float) -> dict:
             """
             Weryfikuje, czy podane próbki audio należą do zarejestrowanego lidera.
+            Porównuje z uśrednionym embeddingiem z historii próbek.
             
             Argumenty:
                 audio_samples (np.ndarray): Próbki audio.
@@ -155,13 +204,13 @@ def create_speaker_verifier():
             Hierarchia wywołań:
                 stt.py -> SpeechToTextProcessingEngine._process_recorded_speech_segment() -> verify_speaker_identity()
             """
-            if self._enrolled_embedding_vector is None:
+            if self._mean_embedding is None:
                 return {"enabled": True, "enrolled": False}
             import torch, torch.nn.functional as F
             current_embedding = self._compute_embedding(audio_samples, sample_rate_hz)
             similarity_score = float(F.cosine_similarity(
                 torch.tensor(current_embedding, dtype=torch.float32).flatten(),
-                torch.tensor(self._enrolled_embedding_vector, dtype=torch.float32).flatten(), dim=0, eps=1e-8
+                torch.tensor(self._mean_embedding, dtype=torch.float32).flatten(), dim=0, eps=1e-8
             ).detach().cpu().item())
             
             current_time = time.time()
@@ -171,7 +220,9 @@ def create_speaker_verifier():
             adjusted_threshold = (
                         self.sticky_threshold - self.grace_period) if audio_volume_dbfs > -22.0 else self.sticky_threshold  # emocje → głośniej → trochę łagodniej
             
-            if age_seconds <= self.sticky_seconds and similarity_score >= adjusted_threshold:
+            # Znacznie łagodniejsze wymagania przez pierwszą minutę rozmowy (sticky_seconds)
+            # ECAPA radzi sobie gorzej z bardzo krótkimi wypowiedziami (rzędu 2s).
+            if age_seconds <= self.sticky_seconds and similarity_score >= (adjusted_threshold - 0.25):
                 is_leader = True
             elif similarity_score >= self.threshold:
                 is_leader = True

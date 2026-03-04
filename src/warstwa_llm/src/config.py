@@ -3,8 +3,8 @@ import pathlib
 from dotenv import load_dotenv
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
-# from pydantic_ai.providers.ollama import OllamaProvider
-# from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 # Ładowanie zmiennych środowiskowych z głównego pliku .env projektu
 _PROJECT_ROOT_ENV = pathlib.Path(__file__).resolve().parent.parent.parent.parent / ".env"
@@ -17,14 +17,23 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "google").lower()
+OLLAMA_MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5:latest")
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
-GOOGLE_PROVIDER = GoogleProvider(api_key=GEMINI_API_KEY)
-GOOGLE_MODEL = GoogleModel(GEMINI_MODEL, provider=GOOGLE_PROVIDER)
-
-# CURRENT_MODEL setup
-CURRENT_MODEL = GOOGLE_MODEL
-CURRENT_PROVIDER = GOOGLE_PROVIDER
+# CURRENT_MODEL setup — przełączanie między providerami
+if LLM_PROVIDER == "ollama":
+    _ollama_provider = OpenAIProvider(base_url=OLLAMA_BASE_URL, api_key="ollama")
+    CURRENT_MODEL = OpenAIModel(OLLAMA_MODEL_NAME, provider=_ollama_provider)
+    CURRENT_PROVIDER = _ollama_provider
+    print(f"[LLM] Uzyto providera: OLLAMA ({OLLAMA_MODEL_NAME})")
+else:
+    GOOGLE_PROVIDER = GoogleProvider(api_key=GEMINI_API_KEY)
+    GOOGLE_MODEL = GoogleModel(GEMINI_MODEL, provider=GOOGLE_PROVIDER)
+    CURRENT_MODEL = GOOGLE_MODEL
+    CURRENT_PROVIDER = GOOGLE_PROVIDER
+    print(f"[LLM] Uzyto providera: GOOGLE ({GEMINI_MODEL})")
 
 ### FIELDS CONSTANTS
 ANSWER = "answer"
@@ -53,7 +62,8 @@ DATA_LLM_DIR = DATA_DIR / "warstwa_llm"
 DATA_FOLDER = str(DATA_LLM_DIR)
 LOGS_DIR = PROJECT_ROOT / "logs"
 ENV_FILE = PROJECT_ROOT / ".env"
-CHROMADB_PATH = str(PROJECT_ROOT / "chroma_db")
+MEM0_KNOWLEDGE_PATH = "data" + os.sep + "qdrant_knowledge_data"
+KNOWLEDGE_COLLECTION_NAME = "watus_knowledge"
 QUESTION_FILES_PATH = DATA_LLM_DIR / "questions.jsonl"
 
 # Ścieżki specyficzne dla modułu LLM
@@ -210,11 +220,16 @@ Jesteś AI, które wybiera odpowiednie narzędzie na podstawie zapytania użytko
 Dostępne narzędzia:
 - watoznawca: Użyj do specjalistycznej wiedzy o Wojskowej Akademii Technicznej (WAT), np. kierunki studiów, historia, kadra czy wydarzenia na WAT.
 
+UWAGA: Transkrypcje z głosu mogą posiadać błędy! Użytkownicy często pytają o WAT, więc słowa takie jak "VAT", "watu", "wacie", "debiza" (zamiast dewiza), "moc do pczelni" (zamiast uczelni) i inne podobnie brzmiące zlepki wyrazów prawie zawsze oznaczają pytania o Wojskową Akademię Techniczną (WAT). Zawsze domyślaj się kontekstu WAT nawet z błędnie zapisanych fonetycznie zdań.
+
 Output: Nazwa wybranego narzędzia (watoznawca)
 
 Przykłady:
 - Query: "Jakie są kierunki studiów na WAT?" Output: watoznawca (Specjalistyczna wiedza o WAT.)
-- Query: "Ile zarabia dziekan WAT?" Output: watoznawca (Związane z kadrą WAT.)
+- Query: "Ile zarabia dziekan VAT?" Output: watoznawca (VAT to fonetyczna literówka od WAT.)
+- Query: "Jak brzmi debiza watu?" Output: watoznawca (debiza watu = dewiza WAT.)
+- Query: "Ilu doktorów zatrudnia VAT" Output: watoznawca (VAT = WAT.)
+- Query: "moc do pczelni" Output: watoznawca (moc do pczelni to błąd od "do uczelni".)
 
 Na podstawie zapytania użytkownika outputuj tylko nazwę narzędzia (watoznawca).
 """

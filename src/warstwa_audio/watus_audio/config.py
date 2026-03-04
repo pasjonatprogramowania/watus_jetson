@@ -103,7 +103,7 @@ def _normalize_fw_model(name: str) -> str:
 # === Konfiguracja Whisper (Uproszczona) ===
 # Rozmiar modelu Whisper.
 # Możliwe wartości: 'tiny', 'base', 'small', 'medium', 'large', 'large-v3'.
-_whisper_size = os.environ.get("WHISPER_SIZE", "medium").lower()
+_whisper_size = os.environ.get("WHISPER_SIZE", "large").lower()
 
 # Typ urządzenia obliczeniowego.
 # Możliwe wartości: 'cpu', 'gpu' (zamieniane na 'cuda' w kodzie).
@@ -176,7 +176,7 @@ DIALOG_PATH = str(_PROJECT_ROOT / (os.environ.get("DIALOG_PATH") or "data/watus_
 # === Weryfikacja Mówcy ===
 SPEAKER_VERIFY = _env_int("SPEAKER_VERIFY", 1)
 WAKE_WORDS = [w.strip() for w in
-              (os.environ.get("WAKE_WORDS") or "hej watusiu,hej watuszu,hej watusił,kej watusił,hej watośiu").split(",") if
+              (os.environ.get("WAKE_WORDS") or "Batusiu,Hej, Watusiu,watusiu,hej,hej watusiu,hej watuszu,hej watusił,kej watusił,hej watośiu").split(",") if
               w.strip()]
 # Próg podobieństwa głosu (0.0 - 1.0). Wyższy = trudniej zaakceptować.
 SPEAKER_THRESHOLD = _env_float("SPEAKER_THRESHOLD", 0.64)
@@ -189,6 +189,13 @@ SPEAKER_MIN_DBFS = _env_float("SPEAKER_MIN_DBFS", -40.0)
 SPEAKER_MAX_DBFS = _env_float("SPEAKER_MAX_DBFS", -5.0)
 SPEAKER_BACK_THRESHOLD = _env_float("SPEAKER_BACK_THRESHOLD", 0.56)
 SPEAKER_REQUIRE_MATCH = _env_int("SPEAKER_REQUIRE_MATCH", 1)
+SPEAKER_EMBEDDING_HISTORY_SIZE = _env_int("SPEAKER_EMBEDDING_HISTORY_SIZE", 5)
+SPEAKER_ADAPTIVE_LEARN = _env_int("SPEAKER_ADAPTIVE_LEARN", 1)
+SPEAKER_ADAPTIVE_MIN_SCORE = _env_float("SPEAKER_ADAPTIVE_MIN_SCORE", 0.60)
+
+# === Pamięć konwersacji (Reporter) ===
+CONV_MEMORY_SIZE = _env_int("CONV_MEMORY_SIZE", 5)
+CONV_MEMORY_TTL_S = _env_float("CONV_MEMORY_TTL_S", 600.0)
 
 # === Zachowanie ===
 WAIT_REPLY_S = _env_float("WAIT_REPLY_S", 0.6)
