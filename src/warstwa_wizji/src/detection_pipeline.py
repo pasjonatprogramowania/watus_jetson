@@ -218,7 +218,7 @@ class DetectionPipeline:
                 detections["brightness"], detections["suggested_mode"],
             )
 
-        return detections
+        return detections, frame_bgr_vis
 
     # ======================== METODY PRYWATNE ========================
 

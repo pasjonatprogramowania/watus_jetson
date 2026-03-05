@@ -103,7 +103,7 @@ class CVAgent:
                     frame_bgr, imgsz=self.imgsz, run_detection=run_detection,
                 )
 
-                detections = self.pipeline.process_frame(
+                detections, frame_bgr_vis = self.pipeline.process_frame(
                     frame_bgr=frame_bgr,
                     dets=dets,
                     frame_idx=frame_idx,
@@ -124,9 +124,9 @@ class CVAgent:
 
                 # Wyświetlanie / nagrywanie
                 if show_window:
-                    self.video.show_frame(frame_bgr)
+                    self.video.show_frame(frame_bgr_vis)
                 if save_video:
-                    self.video.write_frame(frame_bgr)
+                    self.video.write_frame(frame_bgr_vis)
 
                 frame_idx += 1
 
