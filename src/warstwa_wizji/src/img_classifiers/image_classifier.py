@@ -14,6 +14,8 @@ Hierarchia wywołań:
     warstwa_wizji/main.py -> CVAgent.__init__() -> getClothesClassifiers()
 """
 
+import json
+import os
 import time
 
 import numpy as np
@@ -27,6 +29,26 @@ from transformers import (
 
 from .color_classifier import findDominantColor
 from .utils import retrieve_img
+
+# Katalog z plikami ONNX i metadanymi
+_MODELS_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "models")
+)
+
+# Mapowanie klasy klasyfikatora → nazwa pliku ONNX (bez rozszerzenia)
+ONNX_NAMES = {
+    "EmotionClassifier": "emotion",
+    "GenderClassifier": "gender",
+    "AgeClassifier": "age",
+    "ClothesClassifier": "clothes_type",
+    "ClothesPatternClassifier": "clothes_pattern",
+}
+
+try:
+    import onnxruntime as ort
+    _ORT_AVAILABLE = True
+except ImportError:
+    _ORT_AVAILABLE = False
 
 
 class ImageClassifier:
@@ -58,34 +80,79 @@ class ImageClassifier:
         self.model = None
         self.processor = None
         self.id2label = {}
+        self.onnx_session = None
 
-    def load_models(self):
+    def load_models(self, use_onnx: bool = False):
         """
-        Ładuje model i procesor z HuggingFace Hub.
+        Ładuje model — z pliku ONNX jeśli dostępny, inaczej z HuggingFace Hub.
         
-        Domyślnie ładuje modele Siglip. Klasy pochodne mogą nadpisać
-        tę metodę dla innych architektur (np. ViT).
-        
-        Hierarchia wywołań:
-            warstwa_wizji/main.py -> CVAgent.__init__() -> load_models()
+        Argumenty:
+            use_onnx: Jeśli True, próbuje załadować plik .onnx z src/models/.
+                      Gdy plik nie istnieje lub brak onnxruntime — fallback na PyTorch.
         """
+        if use_onnx and self._try_load_onnx():
+            return
         self.processor = AutoImageProcessor.from_pretrained(self.id, use_fast=True)
         self.model = SiglipForImageClassification.from_pretrained(self.id)
+
+    def _try_load_onnx(self) -> bool:
+        """Próbuje załadować model ONNX i metadata. Zwraca True jeśli sukces."""
+        if not _ORT_AVAILABLE:
+            print(f"[ONNX] onnxruntime niedostępny — fallback na PyTorch")
+            return False
+
+        cls_name = type(self).__name__
+        onnx_basename = ONNX_NAMES.get(cls_name)
+        if onnx_basename is None:
+            return False
+
+        onnx_path = os.path.join(_MODELS_DIR, f"{onnx_basename}.onnx")
+        meta_path = os.path.join(_MODELS_DIR, f"{onnx_basename}_meta.json")
+
+        if not os.path.isfile(onnx_path):
+            print(f"[ONNX] Brak pliku {onnx_path} — fallback na PyTorch")
+            return False
+
+        # Ładowanie sesji ONNX
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        self.onnx_session = ort.InferenceSession(str(onnx_path), providers=providers)
+        print(f"[ONNX] Załadowano sesję: {onnx_path}")
+
+        # Ładowanie procesora z metadata lub z HF Hub
+        if os.path.isfile(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            # id2label z meta (nadpisuje domyślny, jeśli istnieje)
+            if "id2label" in meta:
+                self.id2label = meta["id2label"]
+
+        # Procesor nadal potrzebny do preprocesingu obrazu
+        arch = None
+        if os.path.isfile(meta_path):
+            arch = meta.get("arch")
+        if arch == "vit":
+            self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
+        else:
+            self.processor = AutoImageProcessor.from_pretrained(self.id, use_fast=True)
+
+        return True
+
+    @property
+    def is_onnx(self) -> bool:
+        """Czy model działa w trybie ONNX."""
+        return self.onnx_session is not None
 
     def process(self, img) -> dict:
         """
         Przetwarza obraz i zwraca prawdopodobieństwa dla każdej klasy.
-        
-        Argumenty:
-            img (PIL.Image): Obraz wejściowy.
-            
-        Zwraca:
-            dict: Słownik {nazwa_klasy: prawdopodobieństwo}.
-                  Prawdopodobieństwa sumują się do 1.0.
-                  
-        Hierarchia wywołań:
-            warstwa_wizji/main.py -> CVAgent._process_person() -> process()
+        Automatycznie używa ONNX Runtime jeśli sesja jest aktywna.
         """
+        if self.onnx_session is not None:
+            return self._process_onnx(img)
+        return self._process_pytorch(img)
+
+    def _process_pytorch(self, img) -> dict:
+        """Inferencja przez PyTorch."""
         img = img.convert("RGB")
         inputs = self.processor(images=img, return_tensors="pt")
         
@@ -96,6 +163,25 @@ class ImageClassifier:
 
         prediction = {
             self.id2label[str(i)]: round(probs[i], 3) 
+            for i in range(len(probs))
+        }
+        return prediction
+
+    def _process_onnx(self, img) -> dict:
+        """Inferencja przez ONNX Runtime."""
+        img = img.convert("RGB")
+        inputs = self.processor(images=img, return_tensors="np")
+        pixel_values = inputs["pixel_values"].astype(np.float32)
+
+        ort_inputs = {"pixel_values": pixel_values}
+        logits = self.onnx_session.run(["logits"], ort_inputs)[0]
+
+        # Softmax
+        exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
+        probs = (exp_logits / exp_logits.sum(axis=1, keepdims=True)).squeeze().tolist()
+
+        prediction = {
+            self.id2label[str(i)]: round(probs[i], 3)
             for i in range(len(probs))
         }
         return prediction
@@ -122,8 +208,10 @@ class EmotionClassifier(ImageClassifier):
             "6": "Neutral",
         }
 
-    def load_models(self):
-        """Ładuje model ViT specyficzny dla rozpoznawania emocji."""
+    def load_models(self, use_onnx: bool = False):
+        """Ładuje model ViT lub ONNX dla rozpoznawania emocji."""
+        if use_onnx and self._try_load_onnx():
+            return
         self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
         self.model = ViTForImageClassification.from_pretrained(self.id)
 
@@ -187,8 +275,10 @@ class ClothesClassifier(ImageClassifier):
             "6": "Shortsleeve"
         }
 
-    def load_models(self):
-        """Ładuje model ViT specyficzny dla klasyfikacji ubrań."""
+    def load_models(self, use_onnx: bool = False):
+        """Ładuje model ViT lub ONNX dla klasyfikacji ubrań."""
+        if use_onnx and self._try_load_onnx():
+            return
         self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
         self.model = ViTForImageClassification.from_pretrained(self.id)
 
@@ -221,65 +311,51 @@ class ClothesPatternClassifier(ImageClassifier):
             "13": "Transparent",
         }
 
-    def load_models(self):
-        """Ładuje model ViT specyficzny dla klasyfikacji wzorów."""
+    def load_models(self, use_onnx: bool = False):
+        """Ładuje model ViT lub ONNX dla klasyfikacji wzorów."""
+        if use_onnx and self._try_load_onnx():
+            return
         self.processor = ViTImageProcessor.from_pretrained(self.id, use_fast=True)
         self.model = ViTForImageClassification.from_pretrained(self.id)
 
 
-def getClothesClassifiers():
+def getClothesClassifiers(use_onnx: bool = False):
     """
     Tworzy i zwraca załadowane klasyfikatory do analizy ubrań.
     
-    Funkcja inicjalizuje trzy klasyfikatory:
-    - Typ ubrania (koszulka, spodnie, buty, itp.)
-    - Wzór ubrania (paski, kratka, jednolity, itp.)
-    - Dominujący kolor (funkcja K-Means)
+    Argumenty:
+        use_onnx: Jeśli True, próbuje załadować modele z plików ONNX.
     
     Zwraca:
         tuple: (ClothesClassifier, ClothesPatternClassifier, findDominantColor)
-        
-    Uwaga:
-        Ładowanie modeli może zająć kilka sekund przy pierwszym uruchomieniu.
-        
-    Hierarchia wywołań:
-        warstwa_wizji/main.py -> CVAgent.__init__() -> getClothesClassifiers()
     """
     clothes_classifier = ClothesClassifier()
     clothes_pattern_classifier = ClothesPatternClassifier()
     color_classifier = findDominantColor
     
-    clothes_classifier.load_models()
-    clothes_pattern_classifier.load_models()
+    clothes_classifier.load_models(use_onnx=use_onnx)
+    clothes_pattern_classifier.load_models(use_onnx=use_onnx)
     
     return clothes_classifier, clothes_pattern_classifier, color_classifier
 
 
-def getClassifiers():
+def getClassifiers(use_onnx: bool = False):
     """
     Tworzy i zwraca załadowane klasyfikatory do analizy osób.
     
-    Funkcja inicjalizuje trzy klasyfikatory:
-    - Emocje twarzy (szczęśliwy, smutny, zły, itp.)
-    - Płeć (kobieta, mężczyzna)
-    - Grupa wiekowa (dziecko, nastolatek, dorosły, itp.)
+    Argumenty:
+        use_onnx: Jeśli True, próbuje załadować modele z plików ONNX.
     
     Zwraca:
         tuple: (EmotionClassifier, GenderClassifier, AgeClassifier)
-        
-    Uwaga:
-        Ładowanie modeli może zająć kilka sekund przy pierwszym uruchomieniu.
-        
-    Hierarchia wywołań:
-        warstwa_wizji/main.py -> CVAgent.__init__() -> getClassifiers()
     """
     emotion_classifier = EmotionClassifier()
     gender_classifier = GenderClassifier()
     age_classifier = AgeClassifier()
     
-    emotion_classifier.load_models()
-    gender_classifier.load_models()
-    age_classifier.load_models()
+    emotion_classifier.load_models(use_onnx=use_onnx)
+    gender_classifier.load_models(use_onnx=use_onnx)
+    age_classifier.load_models(use_onnx=use_onnx)
     
     return emotion_classifier, gender_classifier, age_classifier
 

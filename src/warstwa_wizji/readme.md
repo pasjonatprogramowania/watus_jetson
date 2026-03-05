@@ -3,7 +3,11 @@ pip install --index-url https://download.pytorch.org/whl/cu124 torch==2.6.* torc
 
 Następnie zainstaluj i wypakuj TensorRT ze strony Nvidia. W katalogu /bin z aktywowanym środowiskiem wprowadź komendę
 ```bash
-pip install tensorrt-*-cp3x-none-win_amd64.whl
+pip install tensorrt-[WERSJA]-cp[WERSJA_PYTHON]-none-win_amd64.whl
 ```
 
-Następnie 
+Wykonanie testów jednostkowych i integracyjnych
+
+```bash
+python -m unittest discover -s tests -v 
+```

@@ -16,9 +16,20 @@ Hierarchia wywołań:
 
 from .angle import calc_obj_angle
 from .brightness import calc_brightness, suggest_mode
-from .old_tracker import IoUTracker as Tracker
-from .new_tracker import nms_per_class
-from .cv_wrapper import CVWrapper
+try:
+    from .old_tracker import IoUTracker as Tracker
+except ImportError:
+    Tracker = None
+
+try:
+    from .new_tracker import nms_per_class
+except ImportError:
+    nms_per_class = None
+
+try:
+    from .cv_wrapper import CVWrapper
+except ImportError:
+    CVWrapper = None
 from .lidar_integration import read_lidar_tracks, compute_lidar_angle, match_camera_to_lidar
 from .detection_processors import (
     process_clothes_detection, 
