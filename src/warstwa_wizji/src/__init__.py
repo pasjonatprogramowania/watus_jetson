@@ -19,7 +19,7 @@ Hierarchia wywołań:
         -> DetectionPipeline (przetwarzanie klatki)
 """
 
-from .cv_utils import *
+from .utils import *
 from .cv_agent import CVAgent
 from .model_manager import ModelManager
 from .video_io import VideoIO

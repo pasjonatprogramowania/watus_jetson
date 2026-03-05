@@ -54,7 +54,7 @@ class TestImports(unittest.TestCase):
         )
 
     def test_import_parallel_process(self):
-        from warstwa_wizji.src.cv_utils.parallel import (  # noqa: F401
+        from warstwa_wizji.src.utils.parallel import (  # noqa: F401
             ParallelProcess,
             Process,
         )
