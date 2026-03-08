@@ -96,8 +96,19 @@ def setup_zmq_sockets():
     publisher_socket.setsockopt(zmq.LINGER, 0)
     publisher_socket.bind(config.SUB_ADDR)
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log_message(f"[Reporter] SUB dialog.leader  @ {config.PUB_ADDR}")
+    log_message(f"[Reporter] PUB tts.speak      @ {config.SUB_ADDR}")
+    log_message(f"[Reporter] LLM_HTTP_URL       = {config.LLM_HTTP_URL or '(BRAK)'}  timeout={config.HTTP_TIMEOUT:.1f}s")
+    log_message(f"[Reporter] CAMERA_JSONL       = {config.CAMERA_JSONL or '(OFF)'}")
+    log_message(f"[Reporter] SCENARIO_ACTIVE    = {config.SCENARIO_ACTIVE_PATH}")
+    yield
+
 # ===== HTTP API =====
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # ===== Scenariusz (watch) =====
 _scenario_lock = threading.Lock()
@@ -170,14 +181,6 @@ def get_active_scenario_id() -> str:
     """
     with _scenario_lock:
         return _active_scenario_id
-
-@app.on_event("startup")
-def _on_startup():
-    log_message(f"[Reporter] SUB dialog.leader  @ {config.PUB_ADDR}")
-    log_message(f"[Reporter] PUB tts.speak      @ {config.SUB_ADDR}")
-    log_message(f"[Reporter] LLM_HTTP_URL       = {config.LLM_HTTP_URL or '(BRAK)'}  timeout={config.HTTP_TIMEOUT:.1f}s")
-    log_message(f"[Reporter] CAMERA_JSONL       = {config.CAMERA_JSONL or '(OFF)'}")
-    log_message(f"[Reporter] SCENARIO_ACTIVE    = {config.SCENARIO_ACTIVE_PATH}")
 
 @app.get("/health")
 def health_check_endpoint():

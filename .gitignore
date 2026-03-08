@@ -57,7 +57,7 @@ venv.bak/
 .secrets
 *.local
 secrets.json
-
+.adk/
 # --- Bazy Wektorowe ---
 chroma_db/
 data/qdrant_mem0_data/
