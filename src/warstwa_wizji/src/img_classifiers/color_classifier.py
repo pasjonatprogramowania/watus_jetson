@@ -20,7 +20,7 @@ from kmeans_gpu import KMeans
 os.environ["OMP_NUM_THREADS"] = "8"
 
 # Domyślne parametry K-Means
-DEFAULT_NUM_CLUSTERS = 16
+DEFAULT_NUM_CLUSTERS = 64
 MAX_ITERATIONS = 100
 CONVERGENCE_TOLERANCE = 1e-2
 

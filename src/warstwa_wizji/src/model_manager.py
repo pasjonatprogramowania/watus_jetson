@@ -1,7 +1,7 @@
 """
 Moduł zarządzania modelami detekcji obiektów.
 
-Odpowiada za ładowanie modeli YOLO (detektor główny, ubrania, broń),
+Odpowiada za ładowanie modeli YOLO / YOLOE (detektor główny, ubrania, broń),
 eksport do TensorRT (.engine) oraz rozgrzewanie GPU.
 
 Hierarchia wywołań:
@@ -9,14 +9,33 @@ Hierarchia wywołań:
 """
 
 import os
+from typing import List, Optional
+
 import torch
 from torch.amp import autocast
-from ultralytics import YOLO
+from ultralytics import YOLO, YOLOWorld
+
+# Predefiniowane klasy dla modelu YOLOE
+YOLOE_CLASSES: List[str] = [
+    "person",
+    "car",
+    "bus",
+    "truck",
+    "bicycle",
+    "motorcycle",
+    "dog",
+    "cat",
+    "backpack",
+    "handbag",
+    "suitcase",
+    "knife",
+    "cell phone",
+]
 
 
 class ModelManager:
     """
-    Zarządza modelami YOLO do detekcji obiektów, ubrań i broni.
+    Zarządza modelami YOLO / YOLOE do detekcji obiektów, ubrań i broni.
 
     Atrybuty:
         device (torch.device): Urządzenie obliczeniowe (cuda/cpu).
@@ -25,15 +44,19 @@ class ModelManager:
         guns_detector (YOLO): Model detekcji broni.
         class_names (dict): Mapowanie ID klasy -> nazwa dla głównego detektora.
         imgsz (int): Rozmiar wejściowy obrazu dla modelu.
+        use_yoloe (bool): Czy używany jest model YOLOE z predefiniowanymi klasami.
     """
 
     def __init__(
         self,
-        weights_path: str = "yolo12s.pt",
+        weights_path: str = "yoloe-11-s.pt",
         imgsz: int = 640,
         export_to_engine: bool = False,
+        use_yoloe: bool = True,
+        yoloe_classes: Optional[List[str]] = None,
     ):
         self.imgsz = imgsz
+        self.use_yoloe = use_yoloe
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"device: {self.device}")
@@ -43,8 +66,16 @@ class ModelManager:
 
         # Główny detektor
         weights_path = self._resolve_engine_model(weights_path, export_to_engine)
-        self.detector = YOLO(weights_path)
-        self.class_names = self.detector.names
+
+        if self.use_yoloe:
+            self.detector = YOLOWorld(weights_path)
+            classes = yoloe_classes if yoloe_classes is not None else YOLOE_CLASSES
+            self.detector.set_classes(classes)
+            self.class_names = {i: name for i, name in enumerate(classes)}
+            print(f"[ModelManager] YOLOE – ustawiono {len(classes)} klas: {classes}")
+        else:
+            self.detector = YOLO(weights_path)
+            self.class_names = self.detector.names
 
         # Detektor ubrań
         clothes_path = os.path.join(
@@ -107,7 +138,7 @@ class ModelManager:
         conf = 0.3
         with torch.inference_mode():
             if self.device.type == "cuda":
-                with autocast(dtype=torch.float32, device_type=self.device.type):
+                with autocast(dtype=torch.float16, device_type=self.device.type):
                     detections = self.detector.track(
                         frame_bgr, persist=True, device=self.device,
                         verbose=False, imgsz=imgsz, iou=iou, conf=conf,

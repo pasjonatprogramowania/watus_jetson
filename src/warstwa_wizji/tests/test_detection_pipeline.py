@@ -66,8 +66,9 @@ class TestDetectionPipeline(unittest.TestCase):
 
         person_analyzer = MagicMock()
         person_analyzer.analyze_person.return_value = {
-            "last_frame": 0, "clothes": [], "emotion": None,
+            "clothes": [], "emotion": None,
             "gender": None, "age": None, "lidar_data": None,
+            "last_clothes_frame": 0, "last_emotion_frame": 0,
         }
         person_analyzer.build_add_info.return_value = []
         person_analyzer.person_cache = {}

@@ -51,7 +51,8 @@ def draw_clothes_boxes(
     person_x1, person_y1, person_x2, person_y2 = person_box_xyxy
     person_width = person_x2 - person_x1
     person_height = person_y2 - person_y1
-    
+
+    default_color = box_color
     for item in clothes_data:
         # Pobierz znormalizowane współrzędne
         nx1, ny1, nx2, ny2 = item["box_norm"]
@@ -62,7 +63,8 @@ def draw_clothes_boxes(
         global_y1 = int(person_y1 + ny1 * person_height)
         global_x2 = int(person_x1 + nx2 * person_width)
         global_y2 = int(person_y1 + ny2 * person_height)
-        
+
+        box_color = item["details"].get("color", default_color)
         # Rysuj ramkę i etykietę
         cv2.rectangle(frame_bgr, (global_x1, global_y1), (global_x2, global_y2), box_color, 2)
         cv2.putText(

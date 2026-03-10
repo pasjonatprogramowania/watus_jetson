@@ -260,7 +260,11 @@ class DetectionPipeline:
             l_dist = lm.get("last_position", [0, 0])[1]
 
             if track_id not in person_cache:
-                person_cache[track_id] = {"last_frame": -9999}
+                person_cache[track_id] = {
+                        "gender": None, "age": None, "emotion": None,
+                        "clothes": [], "lidar_data": None,
+                        "last_clothes_frame": -9999, "last_emotion_frame": -9999,
+                    }
             person_cache[track_id]["lidar_data"] = {"id": l_id, "dist": l_dist}
 
         elif track_id in person_cache and person_cache[track_id].get("lidar_data"):

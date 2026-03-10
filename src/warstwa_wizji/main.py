@@ -154,8 +154,8 @@ def open_camera(device: str | int) -> cv2.VideoCapture:
 
 def write_jsonl(path: str, obj: Dict[str, Any]) -> None:
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False, indent=4) + "\n")
             # f.close()
     except Exception as e:
         print(f"[VISION] JSONL write error: {e}", flush=True)
@@ -205,7 +205,8 @@ def main():
     cap = open_camera(args.device)
     agent = CVAgent(
         json_save_func=write_jsonl,
-        weights_path="../../models/yolo12n.pt",
+        weights_path="../../models/yolo12s.pt",
+        use_yoloe = False,
         # source="to_detect1.mp4"
         source=0,
         export_to_engine=args.export_engine

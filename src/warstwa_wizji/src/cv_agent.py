@@ -42,6 +42,7 @@ class CVAgent:
         json_save_func=None,
         use_net_stream: bool = False,
         export_to_engine: bool = False,
+        use_yoloe: bool = False,
     ):
         self.save_to_json = json_save_func
         self.imgsz = imgsz
@@ -51,6 +52,7 @@ class CVAgent:
             weights_path=weights_path,
             imgsz=imgsz,
             export_to_engine=export_to_engine,
+            use_yoloe=use_yoloe
         )
         self.video = VideoIO(
             source=source,

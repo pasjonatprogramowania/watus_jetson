@@ -21,8 +21,14 @@ if GPU_ENABLED:
         getClothesClassifiers,
     )
 
-# Liczba klatek przed odświeżeniem cache
-CACHE_TTL_FRAMES = 100
+# Interwały odświeżania poszczególnych grup cech (w klatkach).
+# Różne wartości rozsuwają obliczenia w czasie, zapobiegając skokom GPU.
+CLOTHES_DETECT_INTERVAL = 1000    # detekcja boxów ubrań
+CLOTHES_COLOR_INTERVAL = 500     # klasyfikacja koloru ubrań
+CLOTHES_TYPE_INTERVAL = 700      # klasyfikacja typu ubrań
+CLOTHES_PATTERN_INTERVAL = 850   # klasyfikacja wzoru ubrań
+EMOTION_UPDATE_INTERVAL = 2000   # klasyfikacja emocji
+
 
 
 class PersonAnalyzer:
@@ -30,7 +36,8 @@ class PersonAnalyzer:
     Analizuje atrybuty osób: ubrania, kolor, emocje, płeć, wiek.
 
     Zarządza cacheem wyników, aby nie powtarzać kosztownych operacji
-    klasyfikacji w każdej klatce.
+    klasyfikacji w każdej klatce. Poszczególne klasyfikatory uruchamiane
+    są w osobnych oknach czasowych, aby rozłożyć obciążenie GPU.
 
     Atrybuty:
         person_cache (dict): Cache atrybutów osób (track_id -> dane).
@@ -65,6 +72,10 @@ class PersonAnalyzer:
         """
         Analizuje ubrania i atrybuty osoby. Korzysta z cache.
 
+        Płeć i wiek są klasyfikowane jednorazowo (gdy brak w cache).
+        Emocje, detekcja ubrań, kolor, typ i wzór ubrań odświeżane
+        cyklicznie w osobnych oknach czasowych, aby rozłożyć obciążenie GPU.
+
         Argumenty:
             person_crop_bgr: Wycinek klatki z osobą (BGR).
             track_id: ID trackera osoby.
@@ -73,47 +84,88 @@ class PersonAnalyzer:
 
         Zwraca:
             Słownik cache_entry z kluczami:
-            clothes, emotion, gender, age, lidar_data, last_frame.
+            clothes, emotion, gender, age, lidar_data,
+            last_clothes_detect_frame, last_color_frame,
+            last_type_frame, last_pattern_frame, last_emotion_frame.
         """
-        cache_entry = self.person_cache.get(track_id, {"last_frame": -9999})
-        should_update = (frame_idx - cache_entry["last_frame"]) > CACHE_TTL_FRAMES
+        cache_entry = self.person_cache.get(track_id)
 
-        if not should_update:
-            return cache_entry
+        if cache_entry is None:
+            cache_entry = {
+                "gender": None,
+                "age": None,
+                "emotion": None,
+                "clothes": [],
+                "lidar_data": None,
+                "last_clothes_detect_frame": -9999,
+                "last_color_frame": -9999,
+                "last_type_frame": -9999,
+                "last_pattern_frame": -9999,
+                "last_emotion_frame": -9999,
+            }
 
-        current_h, current_w = person_crop_bgr.shape[:2]
+        # --- Płeć / wiek: jednorazowo (nie zmieniają się) ---
+        if cache_entry["gender"] is None or cache_entry["age"] is None:
+            self._classify_demographics(cache_entry, person_crop_bgr)
 
-        new_cache = {
-            "last_frame": frame_idx,
-            "clothes": [],
-            "emotion": cache_entry.get("emotion"),
-            "gender": cache_entry.get("gender"),
-            "age": cache_entry.get("age"),
-            "lidar_data": cache_entry.get("lidar_data"),
-        }
+        # --- Detekcja ubrań (boxy): cyklicznie ---
+        if (frame_idx - cache_entry["last_clothes_detect_frame"]) > CLOTHES_DETECT_INTERVAL:
+            current_h, current_w = person_crop_bgr.shape[:2]
+            cache_entry["clothes"] = self._detect_clothes(
+                person_crop_bgr, clothes_detector, current_w, current_h,
+            )
+            cache_entry["last_clothes_detect_frame"] = frame_idx
 
-        # 1. Detekcja ubrań
-        clothes_data = self._detect_clothes(person_crop_bgr, clothes_detector, current_w, current_h)
-        new_cache["clothes"] = clothes_data
+        # --- Kolor ubrań: cyklicznie (osobne okno) ---
+        if (frame_idx - cache_entry["last_color_frame"]) > CLOTHES_COLOR_INTERVAL:
+            self._classify_clothes_color(cache_entry, person_crop_bgr)
+            cache_entry["last_color_frame"] = frame_idx
 
-        # 2. Klasyfikatory (emocje, płeć, wiek) — wyłączone flagą `and False`
+        # --- Typ ubrań: cyklicznie (osobne okno) ---
+        if (frame_idx - cache_entry["last_type_frame"]) > CLOTHES_TYPE_INTERVAL:
+            self._classify_clothes_type(cache_entry, person_crop_bgr)
+            cache_entry["last_type_frame"] = frame_idx
+
+        # --- Wzór ubrań: cyklicznie (osobne okno) ---
+        if (frame_idx - cache_entry["last_pattern_frame"]) > CLOTHES_PATTERN_INTERVAL:
+            self._classify_clothes_pattern(cache_entry, person_crop_bgr)
+            cache_entry["last_pattern_frame"] = frame_idx
+
+        # --- Emocje: cyklicznie ---
+        if (frame_idx - cache_entry["last_emotion_frame"]) > EMOTION_UPDATE_INTERVAL:
+            self._classify_emotion(cache_entry, person_crop_bgr)
+            cache_entry["last_emotion_frame"] = frame_idx
+
+        self.person_cache[track_id] = cache_entry
+        return cache_entry
+
+    # ------------------------------------------------------------------
+
+    def _classify_demographics(self, cache_entry: dict, crop_bgr: np.ndarray):
+        """Klasyfikuje płeć i wiek — wywoływane jednorazowo per osoba."""
+        if not GPU_ENABLED:
+            return
         try:
-            pil_img = Image.fromarray(cv2.cvtColor(person_crop_bgr, cv2.COLOR_BGR2RGB))
-
-            if GPU_ENABLED and False:
-                res_emo = self.emotion_classifier.process(pil_img)
-                new_cache["emotion"] = max(res_emo, key=res_emo.get)
-
-                res_gen = self.gender_classifier.process(pil_img)
-                new_cache["gender"] = max(res_gen, key=res_gen.get)
-
-                res_age = self.age_classifier.process(pil_img)
-                new_cache["age"] = max(res_age, key=res_age.get)
+            pil_img = Image.fromarray(cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB))
+            res_gen = self.gender_classifier.process(pil_img)
+            cache_entry["gender"] = max(res_gen, key=res_gen.get)
+            res_age = self.age_classifier.process(pil_img)
+            cache_entry["age"] = max(res_age, key=res_age.get)
         except Exception as e:
-            print(f"Classifier error: {e}")
+            print(f"Demographics classifier error: {e}")
 
-        self.person_cache[track_id] = new_cache
-        return new_cache
+    # ------------------------------------------------------------------
+
+    def _classify_emotion(self, cache_entry: dict, crop_bgr: np.ndarray):
+        """Klasyfikuje emocje — wywoływane cyklicznie."""
+        if not GPU_ENABLED:
+            return
+        try:
+            pil_img = Image.fromarray(cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB))
+            res_emo = self.emotion_classifier.process(pil_img)
+            cache_entry["emotion"] = max(res_emo, key=res_emo.get)
+        except Exception as e:
+            print(f"Emotion classifier error: {e}")
 
     # ------------------------------------------------------------------
 
@@ -124,7 +176,7 @@ class PersonAnalyzer:
         crop_w: int,
         crop_h: int,
     ) -> list:
-        """Wykrywa ubrania na wycinku osoby i klasyfikuje ich kolor."""
+        """Wykrywa boxy ubrań na wycinku osoby (bez klasyfikacji atrybutów)."""
         results_clothes = clothes_detector.predict(person_crop_bgr, verbose=False)
         clothes_data = []
 
@@ -142,35 +194,76 @@ class PersonAnalyzer:
                     float(cx2) / crop_w,
                     float(cy2) / crop_h,
                 ]
-
-                details = {}
-                label_name = c_names[int(cc)]
-
-                # Wycinek konkretnego elementu ubrania
-                icx1, icy1 = max(0, int(cx1)), max(0, int(cy1))
-                icx2, icy2 = min(crop_w, int(cx2)), min(crop_h, int(cy2))
-
-                if icx2 > icx1 and icy2 > icy1:
-                    item_crop = person_crop_bgr[icy1:icy2, icx1:icx2]
-                    try:
-                        item_pil = Image.fromarray(
-                            cv2.cvtColor(item_crop, cv2.COLOR_BGR2RGB)
-                        )
-                        if label_name in ["clothing", "shoe", "bag"] and GPU_ENABLED:
-                            dom_color = self.color_clf(np.asarray(item_pil))
-                            details["color"] = [int(x) for x in dom_color]
-                    except Exception as e:
-                        print(f"Clothes detail error: {e}")
-
                 clothes_data.append({
                     "box_norm": norm_box,
-                    "label": label_name,
+                    "label": c_names[int(cc)],
                     "class_num": int(cc),
                     "conf": float(ccnf),
-                    "details": details,
+                    "details": {},
                 })
 
         return clothes_data
+
+    # ------------------------------------------------------------------
+
+    def _get_clothes_crops(
+        self, cache_entry: dict, person_crop_bgr: np.ndarray
+    ) -> list[tuple[dict, Image.Image]]:
+        """Zwraca listę (item, pil_crop) dla ubrań typu clothing/shoe/bag."""
+        crop_h, crop_w = person_crop_bgr.shape[:2]
+        results = []
+        for item in cache_entry.get("clothes", []):
+            if item["label"] not in ("clothing", "shoe", "bag"):
+                continue
+            bx = item["box_norm"]
+            x1 = max(0, int(bx[0] * crop_w))
+            y1 = max(0, int(bx[1] * crop_h))
+            x2 = min(crop_w, int(bx[2] * crop_w))
+            y2 = min(crop_h, int(bx[3] * crop_h))
+            if x2 > x1 and y2 > y1:
+                crop = person_crop_bgr[y1:y2, x1:x2]
+                pil = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                results.append((item, pil))
+        return results
+
+    # ------------------------------------------------------------------
+
+    def _classify_clothes_color(self, cache_entry: dict, person_crop_bgr: np.ndarray):
+        """Klasyfikuje dominujący kolor każdego elementu ubrania."""
+        if not GPU_ENABLED:
+            return
+        try:
+            for item, pil_img in self._get_clothes_crops(cache_entry, person_crop_bgr):
+                dom_color = self.color_clf(np.asarray(pil_img))
+                item["details"]["color"] = [int(x) for x in dom_color]
+        except Exception as e:
+            print(f"Clothes color error: {e}")
+
+    # ------------------------------------------------------------------
+
+    def _classify_clothes_type(self, cache_entry: dict, person_crop_bgr: np.ndarray):
+        """Klasyfikuje typ każdego elementu ubrania."""
+        if not GPU_ENABLED:
+            return
+        try:
+            for item, pil_img in self._get_clothes_crops(cache_entry, person_crop_bgr):
+                res = self.clothes_type_clf.process(pil_img)
+                item["details"]["type"] = max(res, key=res.get)
+        except Exception as e:
+            print(f"Clothes type error: {e}")
+
+    # ------------------------------------------------------------------
+
+    def _classify_clothes_pattern(self, cache_entry: dict, person_crop_bgr: np.ndarray):
+        """Klasyfikuje wzór każdego elementu ubrania."""
+        if not GPU_ENABLED:
+            return
+        try:
+            for item, pil_img in self._get_clothes_crops(cache_entry, person_crop_bgr):
+                res = self.clothes_pattern_clf.process(pil_img)
+                item["details"]["pattern"] = max(res, key=res.get)
+        except Exception as e:
+            print(f"Clothes pattern error: {e}")
 
     # ------------------------------------------------------------------
 
